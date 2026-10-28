@@ -392,8 +392,11 @@ function canShareFiles(file) {
     return navigator.canShare({ files: [file || new File([new Uint8Array([37])], 'x.pdf', { type: 'application/pdf' })] });
   } catch (e) { return false; }
 }
+// Chrome en Android solo deja enviar desde la web PDF, imágenes, audio, vídeo y texto: ni Word ni .brf
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
+const shareBlocked = name => IS_ANDROID && !/\.(pdf|txt|jpe?g|png|webp)$/i.test(name);
 const DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-const typeOf = name => /\.docx$/i.test(name) ? DOCX_TYPE : /\.brf$/i.test(name) ? 'text/plain' : 'application/pdf';
+const typeOf = name => /\.docx$/i.test(name) ? DOCX_TYPE : /\.(brf|txt)$/i.test(name) ? 'text/plain' : 'application/pdf';
 /* Leer el texto de las hojas (para el Word editable): Claude dentro de claude.ai; en el navegador, OCR en el propio móvil */
 let sampleNS = null, sampleImgs = false;
 try {
@@ -2024,6 +2027,7 @@ const GUIDE = [
     'Cada escaneo nuevo empieza en PDF.']],
   ['Enviar y guardar', ['Enviar abre el menú de compartir del móvil: WhatsApp, correo, Drive…',
     'Guardar deja el archivo en el móvil.',
+    'En Android, Chrome no deja enviar archivos Word desde una web: el Word se guarda en Descargas (compártelo desde la app Archivos) y la app te ofrece enviar el mismo texto en .txt o en PDF.',
     'Tras enviar, la barra Enviado ✓ te ofrece empezar un Nuevo escaneo con un toque.',
     'En Recientes quedan los últimos archivos para reenviarlos con un toque.']],
   ['Bueno saber', ['Si cierras la app a medias, al volver aparece Escaneo sin terminar con tus páginas.',
@@ -2135,7 +2139,7 @@ function renderDocInfo() {
   // tras enviar: confirmación a la vista y atajo para el siguiente
   const sent = n && doc.exportedSig === sig();
   $('#sentBar').hidden = !sent;
-  if (sent) $('#sentText').textContent = doc.sentHow === 'saved' ? 'PDF guardado' : 'Enviado';
+  if (sent) $('#sentText').textContent = doc.sentHow === 'saved' ? ({ docx: 'Word guardado', brf: 'Braille guardado' }[doc.sentExt] || 'PDF guardado') : 'Enviado';
   // en lote, el botón de cámara dice qué hace
   const fab = $('#bAddCam'), wide = doc.mode === 'batch' && n > 0;
   fab.classList.toggle('wide', wide);
@@ -2838,6 +2842,11 @@ function docxZip(docx, styles, footer, title) {
     ['docProps/core.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xesc(title)}</dc:title><dc:creator>Njuan Scan</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created></cp:coreProperties>`]
   ]);
 }
+// el mismo contenido en texto plano (.txt), que Android sí deja enviar
+function blocksToTxt(pagesBlocks) {
+  return pagesBlocks.map(bl => bl.map(b => b.t === 'table' ? b.rows.map(r => r.join('\t')).join('\n')
+    : (b.t === 'li' ? '• ' : '') + String(b.text)).join('\n\n')).join('\n\n\n') + '\n';
+}
 async function buildDOCX() {
   if (doc.pages.some(isBusy)) { busy('Terminando páginas…'); await chain; }
   const pages = doc.pages.filter(p => p.out && !p.err);
@@ -2851,12 +2860,13 @@ async function buildDOCX() {
   else if (wopt.style === 'braille') {
     const bp = braillePages(tidyReport(blocks), doc.name.trim() || defaultName());
     const sk = doc.pages.length - pages.length;
-    if (wopt.bfile === 'brf') return { file: new Blob([toBRF(bp)], { type: 'text/plain' }), ext: 'brf', skipped: sk };
-    return { file: makeBrailleDOCX(bp, doc.name.trim() || defaultName()), skipped: sk };
+    const brf = toBRF(bp);
+    if (wopt.bfile === 'brf') return { file: new Blob([brf], { type: 'text/plain' }), ext: 'brf', txt: brf, skipped: sk };
+    return { file: makeBrailleDOCX(bp, doc.name.trim() || defaultName()), txt: bp.map(p => p.join('\n')).join('\n\f'), skipped: sk };
   }
   if (wopt.lang !== 'orig' && !trSkip) shaped = await translateBlocks(shaped, wopt.lang, ctl.signal);
   else opts.lang = detectLang(shaped.map(blocksText).join('\n'));
-  return { file: makeDOCX(shaped, doc.name.trim() || defaultName(), opts), skipped: doc.pages.length - pages.length };
+  return { file: makeDOCX(shaped, doc.name.trim() || defaultName(), opts), txt: blocksToTxt(shaped), skipped: doc.pages.length - pages.length };
 }
 
 /* ---------- Exportar / enviar ---------- */
@@ -2929,21 +2939,22 @@ async function exportDoc(action, force, fmtOverride) {
   }
   busy(false);
   const ext = res.ext || fmt, fn = safeFile(doc.name) + '.' + ext;
-  const r = await deliver(res.file, fn, action, res.skipped);
+  const r = await deliver(res.file, fn, action, res.skipped, { txt: res.txt, pdf: fmt !== 'pdf' ? () => exportDoc('share', true, 'pdf') : null });
   exporting = false;
   if (r === 'shared' || r === 'saved') {
-    doc.exportedSig = sig(); doc.sentHow = r; saveDraft(); renderDocInfo();
+    doc.exportedSig = sig(); doc.sentHow = r; doc.sentExt = ext; saveDraft(); renderDocInfo();
     addRecent(res.file, ext);
   }
 }
 /** Envía (menú compartir) o guarda un archivo. Devuelve 'shared' | 'saved' | 'cancel' | 'fail' | 'later'. */
-async function deliver(blob, filename, action, skipped = 0) {
+async function deliver(blob, filename, action, skipped = 0, alt = {}) {
   const file = new File([blob], filename, { type: typeOf(filename) });
-  const kind = /\.docx$/i.test(filename) ? 'Word' : /\.brf$/i.test(filename) ? 'Braille' : 'PDF';
+  const kind = /\.docx$/i.test(filename) ? 'Word' : /\.brf$/i.test(filename) ? 'Braille' : /\.txt$/i.test(filename) ? 'Texto' : 'PDF';
   const extra = skipped ? ` (${plural(skipped, 'página con error no incluida', 'páginas con error no incluidas')})` : '';
   const done = (msg) => {
     toast(msg + extra);
   };
+  if (action === 'share' && shareBlocked(filename)) return androidBlocked(blob, filename, kind, skipped, alt);
   if (action === 'share' && canShareFiles(file)) {
     try { await navigator.share({ files: [file], title: filename.replace(/\.(pdf|docx)$/i, '') }); done('Enviado'); return 'shared'; }
     catch (e) {
@@ -2978,6 +2989,23 @@ async function deliver(blob, filename, action, skipped = 0) {
   }
   toast('Aquí no se pueden descargar archivos. Abre la app en el navegador.');
   return 'fail';
+}
+/** Android no deja enviar Word/.brf desde la web: se guarda en Descargas y se ofrecen salidas que sí se pueden enviar */
+async function androidBlocked(blob, filename, kind, skipped, alt) {
+  const saved = await deliver(blob, filename, 'save', skipped);
+  if (saved !== 'saved') return saved;
+  dismissToast();   // que el aviso no tape los botones
+  const base = filename.replace(/\.[^.]+$/, '');
+  const acts = [];
+  if (alt.txt) acts.push([kind === 'Braille' ? 'Enviar el braille en .txt' : 'Enviar el texto (.txt)', 'pri', () => {
+    const t = new File([alt.txt], (kind === 'Braille' && /\.brf$/i.test(filename) ? base + '.brf' : base) + '.txt', { type: 'text/plain' });
+    deliver(t, t.name, 'share');
+  }]);
+  if (alt.pdf) acts.push(['Enviar en PDF', alt.txt ? 'sec' : 'pri', alt.pdf]);
+  sheet(kind + ' guardado en Descargas',
+    `Android no deja que las páginas web envíen archivos ${kind === 'Braille' ? '.brf' : 'Word'} directamente.\n\nPara enviarlo: abre la app Archivos (o toca el aviso de descarga), busca “${filename}” y toca Compartir.`
+    + (alt.txt ? `\n\nO envía ahora ${kind === 'Braille' ? 'el mismo braille en un archivo .txt' : 'el mismo texto en un archivo .txt'}, que sí se puede.` : ''), acts, null, 'Cerrar');
+  return 'saved';
 }
 $('#bSend').addEventListener('click', () => exportDoc('share'));
 $('#bNew').addEventListener('click', () => startScan(doc ? doc.mode : 'single'));
@@ -3210,7 +3238,7 @@ function wordSheet() {
   });
   app.append(scrim); (list.querySelector('[aria-checked="true"]') || ok).focus();
 }
-function sheet(title, text, actions, onCancel) {
+function sheet(title, text, actions, onCancel, closeLabel) {
   closeSheet(true);
   sheetBack = document.activeElement; sheetCancel = onCancel || null;
   const scrim = document.createElement('div'); scrim.className = 'scrim';
@@ -3221,7 +3249,7 @@ function sheet(title, text, actions, onCancel) {
     const b = document.createElement('button'); b.className = 'btn ' + kind; b.textContent = label;
     b.addEventListener('click', () => { sheetCancel = null; closeSheet(); fn(); }); sh.append(b);
   }
-  const c = document.createElement('button'); c.className = 'btn sec'; c.textContent = 'Cancelar'; c.addEventListener('click', () => closeSheet(true)); sh.append(c);
+  const c = document.createElement('button'); c.className = 'btn sec'; c.textContent = closeLabel || 'Cancelar'; c.addEventListener('click', () => closeSheet(true)); sh.append(c);
   scrim.append(sh); scrim.addEventListener('click', e => { if (e.target === scrim) closeSheet(true); });
   sh.addEventListener('keydown', e => {
     if (e.key !== 'Tab') return;
