@@ -417,7 +417,8 @@ const wopt = {
   style: WSTYLES.some(s => s[0] === ls.get('ws')) ? ls.get('ws') : 'orig',
   font: WFONTS.some(f => f[0] === ls.get('wf')) ? ls.get('wf') : 'Calibri',
   size: ls.get('wz') === 'big' ? 'big' : 'normal',
-  bfile: ls.get('wb') === 'brf' ? 'brf' : 'docx'   // braille: Word con los puntos a la vista o .brf para impresora braille
+  bfile: ls.get('wb') === 'brf' ? 'brf' : 'docx',
+  lang: ['es', 'en', 'fr', 'de', 'it', 'pt'].includes(ls.get('wl')) ? ls.get('wl') : 'orig'   // idioma del Word ('orig' = sin traducir)   // braille: Word con los puntos a la vista o .brf para impresora braille
 };
 const camLive = !IN_FRAME && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && window.isSecureContext;
 let camLiveFailed = false;
@@ -2019,7 +2020,7 @@ const GUIDE = [
     'Original: la foto tal cual, solo recortada.']],
   ['Formato y calidad', ['PDF: el documento tal cual, con imagen. Calidad Alta (imprimir), Normal (día a día) o Ligera (WhatsApp y correo). Se muestra el tamaño exacto.',
     'Word editable: el texto de cada hoja (títulos, párrafos, listas y tablas) en un archivo .docx que puedes cambiar en Word, Google Docs o Pages. La primera vez pide permiso.',
-    'Al tocar Word eliges cómo lo quieres: Como el original (mismos saltos de línea y centrados, una página por hoja), Informe limpio (puntuación corregida, párrafos y apartados con subtítulos, justificado y con páginas numeradas) Solo texto (para copiar y pegar) o Braille para personas ciegas (braille español en Word para verlo, o .brf para una impresora braille). También el tipo y el tamaño de letra. Se recuerda para la próxima vez; Cambiar lo vuelve a abrir.',
+    'Al tocar Word eliges cómo lo quieres: Como el original (mismos saltos de línea y centrados, una página por hoja), Informe limpio (puntuación corregida, párrafos y apartados con subtítulos, justificado y con páginas numeradas) Solo texto (para copiar y pegar) o Braille para personas ciegas (braille español en Word para verlo, o .brf para una impresora braille). También el idioma (sin traducir, español, inglés, francés, alemán, italiano o portugués) y el tipo y el tamaño de letra. Se recuerda para la próxima vez; Cambiar lo vuelve a abrir.',
     'Cada escaneo nuevo empieza en PDF.']],
   ['Enviar y guardar', ['Enviar abre el menú de compartir del móvil: WhatsApp, correo, Drive…',
     'Guardar deja el archivo en el móvil.',
@@ -2293,7 +2294,7 @@ function renderFormat() {
     hint.textContent = '';
     const st = WSTYLES.find(s => s[0] === wopt.style), fn = WFONTS.find(f => f[0] === wopt.font);
     const row = document.createElement('span'); row.className = 'wsum';
-    const tx = document.createElement('b'); tx.textContent = wopt.style === 'braille' ? `${st[1]} · ${wopt.bfile === 'brf' ? 'archivo .brf para impresora braille' : 'en Word'}` : `${st[1]} · ${fn[1]} · ${wopt.size === 'big' ? 'letra grande' : 'letra normal'}`;
+    const tx = document.createElement('b'); tx.textContent = wopt.style === 'braille' ? `${st[1]} · ${wopt.bfile === 'brf' ? 'archivo .brf para impresora braille' : 'en Word'}` : `${st[1]} · ${fn[1]} · ${wopt.size === 'big' ? 'letra grande' : 'letra normal'}` + (wopt.lang !== 'orig' ? ` · en ${LNAME[wopt.lang]}` : '');
     const ch = document.createElement('button'); ch.className = 'link'; ch.id = 'wChange'; ch.textContent = 'Cambiar';
     ch.addEventListener('click', wordSheet);
     row.append(tx, ' ', ch);
@@ -2610,6 +2611,136 @@ function makeBrailleDOCX(pages, title) {
   const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${W}><w:docDefaults><w:rPrDefault><w:rPr>${F}<w:sz w:val="30"/><w:szCs w:val="30"/><w:lang w:val="es-ES"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="530" w:lineRule="exact"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style></w:styles>`;
   return docxZip(docx, styles, footer, title);
 }
+/* --- Traducir el Word: Claude dentro de claude.ai; en el navegador, su traductor interno o MyMemory --- */
+const WLANGS = [['orig', 'Sin traducir'], ['es', 'Español'], ['en', 'Inglés'], ['fr', 'Francés'], ['de', 'Alemán'], ['it', 'Italiano'], ['pt', 'Portugués']];
+const LNAME = { es: 'español', en: 'inglés', fr: 'francés', de: 'alemán', it: 'italiano', pt: 'portugués' };
+const LTAG = { es: 'es-ES', en: 'en-GB', fr: 'fr-FR', de: 'de-DE', it: 'it-IT', pt: 'pt-PT' };
+// textos fijos del Word (portada del informe y pie) en cada idioma
+const WTXT = {
+  es: { scanned: 'Escaneado el', page: 'Página', of: 'de', p1: 'página', pn: 'páginas', empty: 'sin texto' },
+  en: { scanned: 'Scanned on', page: 'Page', of: 'of', p1: 'page', pn: 'pages', empty: 'no text' },
+  fr: { scanned: 'Numérisé le', page: 'Page', of: 'sur', p1: 'page', pn: 'pages', empty: 'sans texte' },
+  de: { scanned: 'Gescannt am', page: 'Seite', of: 'von', p1: 'Seite', pn: 'Seiten', empty: 'kein Text' },
+  it: { scanned: 'Scansionato il', page: 'Pagina', of: 'di', p1: 'pagina', pn: 'pagine', empty: 'senza testo' },
+  pt: { scanned: 'Digitalizado em', page: 'Página', of: 'de', p1: 'página', pn: 'páginas', empty: 'sem texto' }
+};
+// idioma del original, por las palabras más corrientes
+const LWORDS = {
+  es: 'de la que el en y los se del las por un para con una su al lo como más pero sus le ya o este sí porque esta entre cuando muy sin sobre también',
+  en: 'the of and to in is that for it with as was on be at by this have from or an are not but which you all were they we',
+  fr: 'le de la et les des en un une du est que pour qui dans par sur au pas plus ne se avec il ce sont nous vous',
+  de: 'der die und in den von zu das mit sich des auf für ist im dem nicht ein eine als auch es an werden aus er hat dass sie',
+  it: 'di il che e la per un in è del della non una sono le si con gli da al dei come anche più ma alla questo',
+  pt: 'de que e o do da em um para é com não uma os no se na por mais as dos como mas foi ao ele das tem à seu sua ou'
+};
+const LSETS = Object.fromEntries(Object.entries(LWORDS).map(([k, v]) => [k, new Set(v.split(' '))]));
+function detectLang(text) {
+  const words = String(text).toLowerCase().match(/\p{L}+/gu) || [];
+  let best = 'es', bs = 0;
+  for (const [k, set] of Object.entries(LSETS)) { let n = 0; for (const w of words) if (set.has(w)) n++; if (n > bs) { bs = n; best = k; } }
+  return best;
+}
+const blocksText = bl => bl.map(b => b.t === 'table' ? b.rows.flat().join(' ') : b.text).join('\n');
+// los textos de todos los bloques, en orden (celdas de tabla incluidas), y cómo volver a ponerlos
+function textSlots(blocks) {
+  const slots = [];
+  blocks.forEach((b, i) => { if (b.t === 'table') b.rows.forEach((r, ri) => r.forEach((c, ci) => { if (String(c).trim()) slots.push({ i, ri, ci, text: c }); })); else slots.push({ i, text: b.text }); });
+  return slots;
+}
+function fillSlots(blocks, slots, out) {
+  const res = blocks.map(b => b.t === 'table' ? { ...b, rows: b.rows.map(r => r.slice()) } : { ...b });
+  slots.forEach((s, k) => { const v = out[k] == null ? s.text : out[k]; if (s.ri != null) res[s.i].rows[s.ri][s.ci] = v; else res[s.i].text = v; });
+  return res;
+}
+const trCache = new Map();
+let trSkip = false; // "Enviar sin traducir" tras un fallo de traducción
+const TR_PROMPT = (lang) => `Traduce al ${LNAME[lang]} cada texto de esta lista JSON. Es el texto de un documento escaneado.
+- Traducción fiel y natural: no resumas, no añadas ni quites nada.
+- NO cambies cifras, importes, fechas en número, códigos, referencias, correos ni nombres propios; deja los números exactamente como están (mismos puntos y comas).
+- Conserva los saltos de línea (\\n) de cada texto.
+- Si un texto ya está en ${LNAME[lang]} o no se traduce (un número, un código), devuélvelo igual.
+Responde SOLO con JSON: {"t":[...]} con exactamente el mismo número de textos y en el mismo orden.
+Textos:
+`;
+async function trClaude(texts, lang, signal, onPart) {
+  const out = []; let i = 0, part = 0;
+  const chunks = []; let cur = [], size = 0;
+  for (const t of texts) { const n = t.length + 8; if (cur.length && (size + n > 6000 || cur.length >= 80)) { chunks.push(cur); cur = []; size = 0; } cur.push(t); size += n; }
+  if (cur.length) chunks.push(cur);
+  for (const ch of chunks) {
+    onPart(++part, chunks.length);
+    let got = null;
+    for (let tries = 0; tries < 2 && !got; tries++) {
+      const raw = await sampleNS.json(TR_PROMPT(lang) + JSON.stringify(ch), { modelTier: 'default', signal });
+      const arr = raw && Array.isArray(raw.t) ? raw.t : Array.isArray(raw) ? raw : null;
+      if (arr && arr.length === ch.length) got = arr.map((x, k) => {
+        const s = x == null ? '' : String(x);
+        // si una cifra se ha perdido por el camino, se queda el texto original de ese trozo
+        const nums = ch[k].match(/\d+/g) || [];
+        return s.trim() && nums.every(n => s.includes(n)) ? s : ch[k];
+      });
+    }
+    if (!got) throw { code: 'translate_failed' };
+    out.push(...got); i += ch.length;
+  }
+  return out;
+}
+async function trBrowser(texts, src, lang, onPart) {
+  // 1) traductor del propio navegador (Chrome), sin que el texto salga del móvil
+  // solo si ya tiene el idioma listo (si tuviera que descargarlo, podría tardar mucho); con tiempo máximo
+  const within = (pr, ms) => Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(new Error('lento')), ms))]);
+  try {
+    if (self.Translator && (await within(self.Translator.availability({ sourceLanguage: src, targetLanguage: lang }), 3000)) === 'available') {
+      const t = await within(self.Translator.create({ sourceLanguage: src, targetLanguage: lang }), 8000);
+      const out = [];
+      for (let k = 0; k < texts.length; k++) { onPart(k + 1, texts.length); out.push(await within(t.translate(texts[k]), 30000)); }
+      return out;
+    }
+  } catch (e) { /* sigue con MyMemory */ }
+  // 2) MyMemory (servicio gratuito, con límite diario): trozos de menos de 500 letras
+  const out = [];
+  for (let k = 0; k < texts.length; k++) {
+    onPart(k + 1, texts.length);
+    const pieces = []; let cur = '';
+    for (const f of texts[k].split(/(?<=[.!?;:\n])\s*/)) { if (cur && (cur + ' ' + f).length > 450) { pieces.push(cur); cur = f; } else cur = cur ? cur + ' ' + f : f; }
+    if (cur) pieces.push(cur);
+    const done = [];
+    for (let p of pieces) {
+      while (p.length > 450) { done.push(await myMemory(p.slice(0, 450), src, lang)); p = p.slice(450); }
+      if (p.trim()) done.push(await myMemory(p, src, lang));
+    }
+    out.push(done.join(' '));
+  }
+  return out;
+}
+async function myMemory(q, src, lang) {
+  let r;
+  try { r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(q)}&langpair=${src}|${lang}`); }
+  catch (e) { throw { code: 'translate_net' }; }
+  const j = await r.json().catch(() => null);
+  if (!j || r.status === 429 || j.responseStatus == 429 || /QUOTA|LIMIT/i.test(String(j.responseDetails || ''))) throw { code: 'translate_quota' };
+  if (j.responseStatus != 200 || !j.responseData) throw { code: 'translate_failed' };
+  return String(j.responseData.translatedText || q);
+}
+/** Traduce los bloques (por páginas) al idioma elegido */
+async function translateBlocks(pagesBlocks, lang, signal) {
+  const src = detectLang(pagesBlocks.map(blocksText).join('\n'));
+  if (src === lang) return pagesBlocks;
+  const flat = pagesBlocks.flat(), slots = textSlots(flat), texts = slots.map(s => s.text);
+  const key = lang + '|' + JSON.stringify(texts);
+  if (!trCache.has(key)) {
+    const msg = (i, n) => busy(`Traduciendo al ${LNAME[lang]}…` + (n > 1 ? ` ${i} de ${n}` : ''), () => ctl && ctl.abort());
+    const stop = new Promise((_, rej) => { if (signal.aborted) rej({ code: 'cancelled' }); signal.addEventListener('abort', () => rej({ code: 'cancelled' }), { once: true }); });
+    const job = ocrEngine() === 'claude' ? trClaude(texts, lang, signal, msg) : trBrowser(texts, src, lang, msg);
+    try { trCache.set(key, await Promise.race([job, stop])); }
+    catch (e) { if (signal.aborted) throw { code: 'cancelled' }; throw e; }
+  }
+  const out = fillSlots(flat, slots, trCache.get(key));
+  // volver a repartir por páginas
+  const res = []; let k = 0;
+  for (const p of pagesBlocks) { res.push(out.slice(k, k + p.length)); k += p.length; }
+  return res;
+}
 /* --- .docx mínimo, sin librerías (zip sin comprimir) --- */
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 function crc32(b) { let c = 0xffffffff; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
@@ -2646,15 +2777,16 @@ const wrun = (text, rpr = '') => '<w:r>' + (rpr ? `<w:rPr>${rpr}</w:rPr>` : '') 
 function makeDOCX(pagesBlocks, title, opts = {}) {
   const style = opts.style || 'orig', font = opts.font || 'Calibri', big = opts.size === 'big';
   const rep = style === 'informe', plain = style === 'texto';
+  const L = WTXT[opts.lang] || WTXT.es, tag = LTAG[opts.lang] || 'es-ES';
   const body = [];
   if (rep) {
     body.push(`<w:p><w:pPr><w:pStyle w:val="Portada"/></w:pPr>${wrun(title)}</w:p>`);
     const d = new Date(), n = opts.pages || pagesBlocks.length;
-    body.push(`<w:p><w:pPr><w:pStyle w:val="Nota"/></w:pPr>${wrun(`Escaneado el ${d.toLocaleDateString('es-ES')} · ${n} ${n === 1 ? 'página' : 'páginas'}`)}</w:p>`);
+    body.push(`<w:p><w:pPr><w:pStyle w:val="Nota"/></w:pPr>${wrun(`${L.scanned} ${d.toLocaleDateString(tag)} · ${n} ${n === 1 ? L.p1 : L.pn}`)}</w:p>`);
   }
   pagesBlocks.forEach((blocks, i) => {
     if (i > 0) body.push('<w:p><w:r><w:br w:type="page"/></w:r></w:p>');
-    if (!blocks.length) body.push(`<w:p><w:pPr><w:pStyle w:val="Nota"/></w:pPr>${wrun('(Página ' + (i + 1) + ' sin texto)')}</w:p>`);
+    if (!blocks.length) body.push(`<w:p><w:pPr><w:pStyle w:val="Nota"/></w:pPr>${wrun(`(${L.page} ${i + 1}: ${L.empty})`)}</w:p>`);
     for (const b of blocks) {
       if (b.t === 'table') {
         const cols = Math.max(1, ...b.rows.map(r => r.length)), wcol = Math.floor(9000 / cols);
@@ -2680,11 +2812,11 @@ function makeDOCX(pagesBlocks, title, opts = {}) {
   // marca de agua: "Njuan" diminuto y gris muy claro en el pie de cada folio (en el informe, además, el número de página)
   const fld = (instr, v) => `<w:fldSimple w:instr="${instr}"><w:r><w:rPr><w:color w:val="808080"/><w:sz w:val="18"/></w:rPr><w:t>${v}</w:t></w:r></w:fldSimple>`;
   const gray = t => `<w:r><w:rPr><w:color w:val="808080"/><w:sz w:val="18"/></w:rPr><w:t xml:space="preserve">${t}</w:t></w:r>`;
-  const pageNo = rep ? `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="0"/></w:pPr>${gray('Página ')}${fld('PAGE', '1')}${gray(' de ')}${fld('NUMPAGES', '1')}</w:p>` : '';
+  const pageNo = rep ? `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="0"/></w:pPr>${gray(L.page + ' ')}${fld('PAGE', '1')}${gray(' ' + L.of + ' ')}${fld('NUMPAGES', '1')}</w:p>` : '';
   const footer = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${W}>${pageNo}<w:p><w:pPr><w:jc w:val="right"/><w:spacing w:after="0"/></w:pPr><w:r><w:rPr><w:i/><w:color w:val="D9D9D9"/><w:sz w:val="12"/></w:rPr><w:t>${WATERMARK}</w:t></w:r></w:p></w:ftr>`;
   const sz = big ? 26 : 22, f = xesc(font), H = rep ? '<w:color w:val="1F3864"/>' : '';
   const normalP = rep ? '<w:pPr><w:jc w:val="both"/><w:spacing w:after="160" w:line="300" w:lineRule="auto"/></w:pPr>' : plain ? '<w:pPr><w:spacing w:after="120"/></w:pPr>' : '';
-  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:cs="${f}" w:eastAsia="${f}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:lang w:val="es-ES"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="${style === 'orig' ? 80 : 120}" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>`
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:cs="${f}" w:eastAsia="${f}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:lang w:val="${tag}"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="${style === 'orig' ? 80 : 120}" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>`
     + `<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/>${normalP}</w:style>`
     + `<w:style w:type="paragraph" w:styleId="Portada"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:jc w:val="left"/><w:pBdr><w:bottom w:val="single" w:sz="8" w:space="6" w:color="1F3864"/></w:pBdr><w:spacing w:before="0" w:after="80"/></w:pPr><w:rPr><w:b/><w:color w:val="1F3864"/><w:sz w:val="${sz + 22}"/></w:rPr></w:style>`
     + `<w:style w:type="paragraph" w:styleId="Titulo1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:jc w:val="left"/><w:spacing w:before="${rep ? 360 : 240}" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/>${H}<w:sz w:val="${sz + 10}"/></w:rPr></w:style>`
@@ -2722,6 +2854,8 @@ async function buildDOCX() {
     if (wopt.bfile === 'brf') return { file: new Blob([toBRF(bp)], { type: 'text/plain' }), ext: 'brf', skipped: sk };
     return { file: makeBrailleDOCX(bp, doc.name.trim() || defaultName()), skipped: sk };
   }
+  if (wopt.lang !== 'orig' && !trSkip) shaped = await translateBlocks(shaped, wopt.lang, ctl.signal);
+  else opts.lang = detectLang(shaped.map(blocksText).join('\n'));
   return { file: makeDOCX(shaped, doc.name.trim() || defaultName(), opts), skipped: doc.pages.length - pages.length };
 }
 
@@ -2783,6 +2917,12 @@ async function exportDoc(action, force, fmtOverride) {
     if (code === 'cancelled') return;
     if (code === 'not_granted' || code === 'sampling_disabled' || code === 'images_unavailable' || code === 'capability_disabled' || code === 'not_declared') { toast('Sin permiso para que Claude lea el texto. Puedes permitirlo la próxima vez o enviarlo en PDF.', ...asPDF); return; }
     if (code === 'rate_limited') { toast('Claude está ocupado o has llegado a tu límite de uso. Prueba en un rato.', ...asPDF); return; }
+    if (code && String(code).startsWith('translate_')) {
+      const plain = ['Enviar sin traducir', () => { trSkip = true; exportDoc(action, true, 'docx').finally(() => { trSkip = false; }); }];
+      toast(code === 'translate_quota' ? 'Se ha acabado la traducción gratuita de hoy. Prueba mañana o envíalo sin traducir.'
+        : code === 'translate_net' ? 'Para traducir hace falta conexión a internet.' : 'No se pudo traducir el texto.', ...plain);
+      return;
+    }
     if (e && e.message === 'script') { toast('Para leer el texto la primera vez hace falta conexión a internet.', ...asPDF); return; }
     if (fmt === 'docx') toast('No se pudo leer el texto. Vuelve a intentarlo.', ...asPDF); else toast('No se pudo crear el PDF. Vuelve a intentarlo.');
     return;
@@ -3036,18 +3176,27 @@ function wordSheet() {
   const bnote = document.createElement('small'); bnote.className = 'hint'; bnote.style.display = 'block'; bnote.style.marginTop = '6px';
   bnote.textContent = 'El Word sirve para ver y revisar el braille; para leerlo con los dedos hay que imprimir el .brf en una impresora braille (o pedirlo a la ONCE).';
   brl.append(bnote);
-  sh.append(typo, brl);
+  const langBox = document.createElement('div');
+  langBox.append(lab('Idioma del Word'));
+  const langs = chipRow(WLANGS, 'lang'); langBox.append(langs);
+  const lnote = document.createElement('small'); lnote.className = 'hint'; lnote.style.display = 'block'; lnote.style.marginTop = '6px';
+  lnote.textContent = ocrEngine() === 'claude' ? 'Claude traduce el texto. Las cifras, fechas y nombres no se cambian.'
+    : 'Se traduce con el traductor del navegador si lo tiene (sin salir del móvil). Si no, el texto se envía a MyMemory, un traductor gratuito de internet con límite diario.';
+  langBox.append(lnote);
+  sh.append(langBox, typo, brl);
   function paint() {
     for (const b of list.children) b.setAttribute('aria-checked', String(b.dataset.k === pick.style));
     for (const c of fonts.children) c.setAttribute('aria-pressed', String(c.dataset.k === pick.font));
     for (const c of sizes.children) c.setAttribute('aria-pressed', String(c.dataset.k === pick.size));
     for (const c of bfiles.children) c.setAttribute('aria-pressed', String(c.dataset.k === pick.bfile));
-    typo.hidden = pick.style === 'braille'; brl.hidden = pick.style !== 'braille';
+    for (const c of langs.children) c.setAttribute('aria-pressed', String(c.dataset.k === pick.lang));
+    lnote.hidden = pick.lang === 'orig';
+    typo.hidden = langBox.hidden = pick.style === 'braille'; brl.hidden = pick.style !== 'braille';
   }
   paint();
   const ok = document.createElement('button'); ok.className = 'btn pri'; ok.id = 'wOk'; ok.textContent = 'Usar este formato';
   ok.addEventListener('click', () => {
-    Object.assign(wopt, pick); ls.set('ws', wopt.style); ls.set('wf', wopt.font); ls.set('wz', wopt.size); ls.set('wb', wopt.bfile);
+    Object.assign(wopt, pick); ls.set('ws', wopt.style); ls.set('wf', wopt.font); ls.set('wz', wopt.size); ls.set('wb', wopt.bfile); ls.set('wl', wopt.lang);
     format = 'docx'; closeSheet(); renderFormat();
   });
   const c = document.createElement('button'); c.className = 'btn sec'; c.textContent = 'Cancelar'; c.addEventListener('click', () => closeSheet(true));
@@ -3108,7 +3257,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(t
 })();
 
 // Para las pruebas automáticas
-window.__njs = { toBraille, braillePages, toBRF, makeBrailleDOCX, tidyReport, tidyText, plainText, reportOK, wopt, outsideOdd, setDebug: () => { window.__njsDebug = {}; }, jpegInfo, bigDecode, makeDOCX, blocksFromPlain, ocrAll: (...a) => ocrAll(...a), get format() { return format; }, textOrientation, background, detectQuad, sideSupport, edgeMap, regionQuad, lineQuad, refineQuad, scoreQuad, aspectRatio, warp, enhance, makePDF, watermark, homography,
+window.__njs = { detectLang, translateBlocks, toBraille, braillePages, toBRF, makeBrailleDOCX, tidyReport, tidyText, plainText, reportOK, wopt, outsideOdd, setDebug: () => { window.__njsDebug = {}; }, jpegInfo, bigDecode, makeDOCX, blocksFromPlain, ocrAll: (...a) => ocrAll(...a), get format() { return format; }, textOrientation, background, detectQuad, sideSupport, edgeMap, regionQuad, lineQuad, refineQuad, scoreQuad, aspectRatio, warp, enhance, makePDF, watermark, homography,
   get doc() { return doc; }, get chain() { return chain; }, onFiles, setPending: t => { pending = t; }, setQuality: k => { quality = k; },
   buildPDF: () => buildPDF().then(r => r.pdf).finally(() => busy(false)), encCache };
 })();
