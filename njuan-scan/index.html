@@ -420,7 +420,8 @@ const WSTYLES = [
 ];
 const WFONTS = [['Calibri', 'Calibri'], ['Arial', 'Arial'], ['Times New Roman', 'Times'], ['Georgia', 'Georgia']];
 const wopt = {
-  style: WSTYLES.some(s => s[0] === ls.get('ws')) ? ls.get('ws') : 'orig',
+  // el braille no se recuerda de una vez para otra: es para casos concretos y confunde si sale sin querer
+  style: WSTYLES.some(s => s[0] === ls.get('ws')) && ls.get('ws') !== 'braille' ? ls.get('ws') : 'orig',
   font: WFONTS.some(f => f[0] === ls.get('wf')) ? ls.get('wf') : 'Calibri',
   size: ls.get('wz') === 'big' ? 'big' : 'normal',
   bfile: ls.get('wb') === 'brf' ? 'brf' : 'docx',
@@ -1545,7 +1546,7 @@ function watermark(c) {
    El lado donde empiezan las líneas (margen alineado) pasa a ser la izquierda. Devuelve 0, 90 o 270. */
 function textOrientation(c) {
   const L0 = Math.max(c.width, c.height), S0 = Math.min(c.width, c.height);
-  const tgt = Math.min(1400, Math.max(700, 420 * L0 / S0));   // tiques: que la línea de texto tenga resolución
+  const tgt = Math.min(1800, Math.max(1100, 420 * L0 / S0));   // letra pequeña y tiques: que la línea de texto tenga resolución
   // tinta = más oscuro que el papel de alrededor (fondo estimado, sin el filtro completo: más rápido)
   const g = scaleCanvas(c, tgt);
   const w = g.width, h = g.height, d = ctx2d(g).getImageData(0, 0, w, h).data;
@@ -1557,7 +1558,7 @@ function textOrientation(c) {
     const i = y * w + x, j = i * 4, bx = Math.min(Bg.sw - 1, (x / Bg.f) | 0), by = Math.min(Bg.sh - 1, (y / Bg.f) | 0);
     if (0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2] < 0.5 * Bg.bY[by * Bg.sw + bx]) { ink[i] = 1; total++; }
   }
-  if (total < w * h * 0.01) return 0;   // poca tinta: no hay base para decidir
+  if (total < w * h * 0.002) return 0;   // casi sin tinta: no hay base para decidir
   const rows = new Float32Array(h), cols = new Float32Array(w);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (ink[y * w + x]) { rows[y]++; cols[x]++; }
   // texto horizontal: muchas filas vacías entre líneas; las columnas casi nunca están vacías
@@ -1565,7 +1566,28 @@ function textOrientation(c) {
     if (a < 0 || b - a < 20) return 0; let g = 0; for (let i = a; i <= b; i++) if (p[i] <= mx * 0.04) g++; return g / (b - a + 1); };
   const gR = gaps(rows), gC = gaps(cols);
   if (window.__njsDebug) window.__njsDebug.or = { gR, gC, total, w, h };
-  if (!(gC > 0.3 && gC > gR * 3)) return 0;
+  if (!(gC > 0.3 && gC > gR * 3)) {
+    // texto horizontal: ¿del derecho o boca abajo? Los trazos que sobresalen hacia arriba (b, d, h, l, t, mayúsculas)
+    // son mucho más que los de abajo (g, j, p, q, y). Boca abajo, al revés.
+    if (!(gR > 0.3 && gR > gC * 2)) return 0;
+    let mxr = 0; for (let y = 0; y < h; y++) if (rows[y] > mxr) mxr = rows[y];
+    let U = 0, D = 0, nl = 0;
+    for (let y = 0; y < h;) {
+      if (rows[y] <= mxr * 0.04) { y++; continue; }
+      let e = y; while (e < h && rows[e] > mxr * 0.04) e++;
+      if (e - y >= 4) {
+        let bm = 0; for (let k = y; k < e; k++) if (rows[k] > bm) bm = rows[k];
+        let c0 = -1, c1 = -1; for (let k = y; k < e; k++) if (rows[k] >= bm * 0.5) { if (c0 < 0) c0 = k; c1 = k; }
+        for (let k = y; k < c0; k++) U += rows[k];
+        for (let k = c1 + 1; k < e; k++) D += rows[k];
+        nl++;
+      }
+      y = e;
+    }
+    if (window.__njsDebug) Object.assign(window.__njsDebug.or, { U, D, nl });
+    // solo si hay texto de verdad (en formularios con recuadros casi no hay trazos sueltos)
+    return nl >= 3 && U + D > total * 0.02 && D > U * 1.6 ? 180 : 0;
+  }
   // 1º pista: los trazos que sobresalen de cada línea (b, d, f, h, l, t, mayúsculas) van hacia arriba del texto
   let mxc = 0; for (let x = 0; x < w; x++) if (cols[x] > mxc) mxc = cols[x];
   let L = 0, R = 0;
@@ -2368,33 +2390,199 @@ async function ocrClaude(p, signal) {
   return cleanBlocks(raw);
 }
 let tessWorker = null;
+// modo de lectura de Tesseract: 3 = maquetación automática, 6 = un bloque fila a fila, 11 = texto suelto
+const psm = m => tessWorker && tessWorker.setParameters ? tessWorker.setParameters({ tessedit_pageseg_mode: m }) : null;
 function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('script')); document.head.append(s); }); }
-async function ocrLocal(p, onStatus) {
+async function ocrLocal(p, onStatus, onStep) {
   if (!tessWorker) {
     onStatus && onStatus('Preparando el lector de texto (solo la primera vez)…');
     try {
       if (!window.Tesseract) await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
       tessWorker = await window.Tesseract.createWorker('spa');
+      // detectar la maquetación de la página (columnas, bloques): si no, mezcla las columnas línea a línea
+      await psm('3');
     } catch (e) { throw new Error('script'); }
   }
   const img = await pageImageForOCR(p, 2400, 0.9);
-  const { data } = await tessWorker.recognize(img);
-  return blocksFromPlain(data.text || '');
+  let base = await blobToCanvas(img);
+  let pass = 0;
+  const read = async c => { pass++; if (pass > 1 && onStep) onStep('repaso ' + pass); return (await tessWorker.recognize(await toBlob(c, 'image/jpeg', 0.92))).data; };
+  // tiques (hoja estrecha y larga): leer fila a fila, para que cada precio quede con su artículo y su cantidad
+  let narrow = base.height > 2 * base.width;
+  if (narrow) await psm('6');
+  let dc = null, data;
+  try {
+  // sellos, firmas en boli y tinta de color tapan o ensucian el texto: se lee una copia sin ellos
+  dc = colourDropout(base);
+  data = await read(dc || base);
+  // ¿se lee mal? Casi siempre es que la hoja está de lado o boca abajo: probar girada y quedarse con la que mejor se lee
+  if (data.confidence != null && data.confidence < 75) {
+    onStatus && onStatus('El texto no se lee bien: probando la hoja girada…');
+    let best = { conf: data.confidence, rot: 0 };
+    for (const r of [180, 90, 270]) {
+      const src = dc || base, sc = scaleCanvas(src, 1600), c = rotate(sc === src ? copyCanvas(src) : sc, r);
+      const d = await read(c); free(c);
+      if (d.confidence > best.conf + 10) best = { conf: d.confidence, rot: r };
+    }
+    if (best.rot) { base = rotate(base, best.rot); if (dc) dc = rotate(dc, best.rot); data = await read(dc || base); }
+  }
+  // tique o tabla sin rayas: los precios han salido en un bloque aparte de sus artículos → leer fila a fila
+  if (!narrow && splitRows(data)) {
+    narrow = true; await psm('6');
+    data = await read(dc || base);
+  }
+  // lo que estaba en color y es texto claro (un título en rojo, un párrafo en azul) se recupera de la lectura normal
+  if (dc) data = withColourLines(data, await read(base));
+  // firma en boli oscuro encima del texto: otra lectura sin ningún color; se añaden solo las líneas que faltaban
+  const ds = colourDropout(base, true);
+  if (ds) { data = withColourLines(data, await read(ds), 70); free(ds); }
+  // texto suelto que la lectura por bloques se salta (totales en una casilla): solo si queda tinta fuera de lo leído
+  if (!narrow && inkOutside(dc || base, data)) {
+    await psm('11');
+    data = withColourLines(data, await read(dc || base), 80);   // sin sellos: que no se cuelen como texto
+  }
+  } finally { await psm('3'); }
+  if (dc) free(dc);
+  free(base);
+  return blocksFromPlain(ocrText(data));
+}
+/** ¿La lectura por bloques ha separado una tabla (artículos a un lado, importes en otro bloque a la misma altura)? */
+function splitRows(data) {
+  const paras = (data && data.paragraphs) || [];
+  const L = []; paras.forEach((q, pi) => (q.lines || []).forEach(l => { if (l.bbox && (l.text || '').trim()) L.push({ l, pi }); }));
+  let n = 0;
+  for (const b of L) {
+    const t = b.l.text.trim();
+    if (t.length > 14 || !/\d/.test(t) || /[a-záéíóúñ]{4}/i.test(t)) continue;   // un importe o una cifra corta
+    const ok = L.some(a => a.pi !== b.pi && a.l.bbox.x1 <= b.l.bbox.x0 + 5 &&
+      Math.min(a.l.bbox.y1, b.l.bbox.y1) - Math.max(a.l.bbox.y0, b.l.bbox.y0) > 0.5 * Math.min(a.l.bbox.y1 - a.l.bbox.y0, b.l.bbox.y1 - b.l.bbox.y0));
+    if (ok) n++;
+  }
+  return n >= 3;
+}
+/** ¿Queda tinta (texto) fuera de las líneas que se han leído? Entonces merece la pena buscar texto suelto */
+function inkOutside(c, data) {
+  const sc = scaleCanvas(c, 700), w = sc.width, h = sc.height, d = ctx2d(sc).getImageData(0, 0, w, h).data, f = w / c.width;
+  if (sc !== c) free(sc);
+  const cov = new Uint8Array(w * h);
+  for (const l of (data && data.lines) || []) { if (!l.bbox || !(l.text || '').trim()) continue;
+    const x0 = Math.max(0, Math.floor(l.bbox.x0 * f) - 2), x1 = Math.min(w - 1, Math.ceil(l.bbox.x1 * f) + 2), y0 = Math.max(0, Math.floor(l.bbox.y0 * f) - 2), y1 = Math.min(h - 1, Math.ceil(l.bbox.y1 * f) + 2);
+    for (let y = y0; y <= y1; y++) cov.fill(1, y * w + x0, y * w + x1 + 1); }
+  let out = 0, ink = 0;
+  const mx = Math.round(w * 0.03), my = Math.round(h * 0.03);
+  for (let y = my; y < h - my; y++) for (let x = mx; x < w - mx; x++) {
+    const j = (y * w + x) * 4; if (0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2] > 110) continue;
+    ink++; if (!cov[y * w + x]) out++;
+  }
+  return out > 40 && out > ink * 0.04;
+}
+/** Arreglos de signos que el lector confunde a menudo */
+function fixOcrLine(t) {
+  return t.replace(/\bN[*°](?=\s?\d)/g, 'Nº')                          // N* 2026 → Nº 2026
+    .replace(/\b(\d{1,2})\.[*%°](?=[\s,;)]|$)/g, '$1.º')                 // 3.% → 3.º
+    .replace(/\b([\w.+-]+)Q\s?([a-z0-9-]+\.(?:es|com|org|net|eu|cat|gal|eus))\b/g, '$1@$2');   // nombreQdominio.es → nombre@dominio.es
+}
+/** Copia de la página sin la tinta de color (sellos azules o morados, firmas en boli, marcas rojas); null si casi no hay */
+function colourDropout(c, strong = false) {
+  const w = c.width, h = c.height, id = ctx2d(c).getImageData(0, 0, w, h), d = id.data;
+  let n = 0, dark = 0;
+  const mask = new Uint8Array(w * h);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+    const r = d[i], g = d[i + 1], b = d[i + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    if (mx - mn < 50) continue;
+    if (!(b - Math.max(r, g) > 15 || r - g > 50)) continue;   // azules, morados, rojos, rosas (no amarillos ni verdes claros de papel)
+    // lo muy oscuro suele ser texto (negro bajo el sello, azul marino); en la lectura "fuerte" se quita también (firmas en boli)
+    if (0.299 * r + 0.587 * g + 0.114 * b < 62) { dark++; if (!strong) continue; }
+    mask[j] = 1; n++;   // azules, morados, rojos, rosas (no amarillos ni verdes claros de papel)
+  }
+  if (n < w * h * 0.0005 || (strong && dark < w * h * 0.0005)) return null;
+  // también el borde suave del trazo (menos color por el desenfoque), pegado a lo ya marcado
+  const edge = [];
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const j = y * w + x; if (mask[j]) continue;
+    if (!(mask[j - 1] || mask[j + 1] || mask[j - w] || mask[j + w])) continue;
+    const i = j * 4, r = d[i], g = d[i + 1], b = d[i + 2];
+    if (!strong && 0.299 * r + 0.587 * g + 0.114 * b < 62) continue;   // sin comerse el texto oscuro
+    if (Math.max(r, g, b) - Math.min(r, g, b) > 20 && (b > Math.max(r, g) || r - g > 25)) edge.push(j);
+  }
+  for (const j of edge) mask[j] = 1;
+  for (let j = 0; j < mask.length; j++) if (mask[j]) { const i = j * 4; d[i] = d[i + 1] = d[i + 2] = 255; }
+  const o = mkCanvas(w, h); ctx2d(o).putImageData(id, 0, 0); o._kind = c._kind;
+  return o;
+}
+/** Añade a la lectura sin color las líneas de texto en color muy claras que no pisan otro texto (títulos, párrafos en color) */
+function withColourLines(drop, full, minConf = 88) {
+  if (!drop || !full || !Array.isArray(drop.paragraphs) || !Array.isArray(full.lines)) return drop;
+  const area = b => Math.max(0, b.x1 - b.x0) * Math.max(0, b.y1 - b.y0);
+  const inter = (a, b) => Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+  const nL = t => ((t || '').match(/[\p{L}\d]/gu) || []).length;
+  const paras = drop.paragraphs.map(q => ({ ...q, lines: (q.lines || []).slice() }));
+  const have = paras.flatMap(q => q.lines).filter(l => (l.text || '').trim() && l.bbox);
+  const extra = [];
+  for (const l of full.lines) {
+    const letters = nL(l.text);
+    if (l.confidence < minConf || letters < 3 || !l.bbox) continue;
+    const over = have.filter(k => inter(k.bbox, l.bbox) > 0.3 * Math.min(area(k.bbox), area(l.bbox)));
+    if (!over.length) { extra.push(l); continue; }
+    // la misma línea, pero ahora mucho más completa (antes cortada por un sello o una firma): se cambia
+    if (over.length === 1 && letters >= 1.4 * nL(over[0].text) + 3 && (l.confidence >= over[0].confidence - 5 || letters >= 2 * nL(over[0].text) + 6)) {
+      for (const q of paras) { const k = q.lines.indexOf(over[0]); if (k >= 0) q.lines[k] = l; }
+    }
+  }
+  if (!extra.length) return { ...drop, paragraphs: paras };
+  for (const l of extra) {
+    // en la misma altura que otra línea y a su lado (un importe a la derecha, en una casilla): se une a esa línea
+    const yo = k => Math.max(0, Math.min(k.bbox.y1, l.bbox.y1) - Math.max(k.bbox.y0, l.bbox.y0)) > 0.6 * Math.min(k.bbox.y1 - k.bbox.y0, l.bbox.y1 - l.bbox.y0);
+    const side = paras.flatMap(q => q.lines).find(k => k.bbox && (k.text || '').trim() && yo(k) && (k.bbox.x1 <= l.bbox.x0 + 5 || l.bbox.x1 <= k.bbox.x0 + 5));
+    if (side) {
+      const t1 = (side.text || '').replace(/\s+$/, ''), t2 = l.text.trim(), left = l.bbox.x1 <= side.bbox.x0 + 5;
+      const merged = { ...side, text: left ? t2 + ' ' + t1 : t1 + ' ' + t2, bbox: { x0: Math.min(side.bbox.x0, l.bbox.x0), y0: Math.min(side.bbox.y0, l.bbox.y0), x1: Math.max(side.bbox.x1, l.bbox.x1), y1: Math.max(side.bbox.y1, l.bbox.y1) } };
+      for (const q of paras) { const k = q.lines.indexOf(side); if (k >= 0) q.lines[k] = merged; }
+      continue;
+    }
+    const pa = { lines: [l], bbox: l.bbox };
+    const xo = q => q.bbox && Math.min(q.bbox.x1, l.bbox.x1) > Math.max(q.bbox.x0, l.bbox.x0);   // misma columna
+    let at = paras.findIndex(q => xo(q) && q.bbox.y0 >= l.bbox.y0);
+    if (at < 0) { const lastAbove = paras.map((q, k) => xo(q) && q.bbox.y1 <= l.bbox.y1 ? k : -1).filter(k => k >= 0).pop(); at = lastAbove === undefined ? paras.length : lastAbove + 1; }
+    paras.splice(at, 0, pa);
+  }
+  return { ...drop, paragraphs: paras };
+}
+/** Texto leído por párrafos, sin las líneas que el lector marca como basura (manchas, logos, bordes de foto) */
+function ocrText(data) {
+  const paras = data && Array.isArray(data.paragraphs) && data.paragraphs.length ? data.paragraphs : null;
+  if (!paras) return (data && data.text) || '';
+  const keep = l => { const t = (l.text || '').trim(); if (!t) return false;
+    const letters = (t.match(/[\p{L}\d]/gu) || []).length;
+    return l.confidence >= 45 || (l.confidence >= 25 && letters >= 12 && letters / t.length > 0.6); };
+  return paras.map(pa => (pa.lines || []).filter(keep).map(l => fixOcrLine(l.text.replace(/\s+$/, ''))).join('\n')).filter(Boolean).join('\n\n');
 }
 /* Texto plano del OCR → párrafos, listas y títulos sencillos */
 function blocksFromPlain(text) {
-  const out = [], bullet = /^([-•·*–]|\d+[.)])\s+/;
+  const out = [], bullet = /^[-•·*–▪►✓]\s+/;
+  const numbered = /^(\d{1,2}|[a-z]|[IVX]{1,4})[.)]\s+\S/;       // "1. Objeto", "a) …", "IV. …" (no años como "2026.")
+  const fake = /^[eo°«]\s+/;   // viñetas que el lector confunde con letras: solo si varias líneas seguidas empiezan igual
   for (const para of String(text).replace(/\r/g, '').split(/\n\s*\n/)) {
     const lines = para.split('\n').map(l => l.trim()).filter(Boolean);
     if (!lines.length) continue;
-    let buf = [];
+    let buf = [], lastLi = false;
     const flush = () => {
       if (!buf.length) return;
       const joined = buf.join('\n');
       const isTitle = buf.length === 1 && joined.length < 60 && joined === joined.toUpperCase() && /[A-ZÁÉÍÓÚÑ]/.test(joined);
       out.push({ t: isTitle ? 'h1' : 'p', text: joined }); buf = [];
     };
-    for (const l of lines) { if (bullet.test(l)) { flush(); out.push({ t: 'li', text: l.replace(bullet, '') }); } else buf.push(l); }
+    lines.forEach((l, i) => {
+      const same = k => k >= 0 && k < lines.length && lines[k][0] === l[0] && fake.test(lines[k]);
+      const isFake = fake.test(l) && (same(i - 1) || same(i + 1));
+      if (bullet.test(l) || isFake) { flush(); out.push({ t: 'li', text: l.replace(isFake ? fake : bullet, '') }); lastLi = true; return; }
+      // continuación de un punto de la lista (empieza en minúscula)
+      if (lastLi && !buf.length && /^\p{Ll}/u.test(l)) { out[out.length - 1].text += '\n' + l; return; }
+      lastLi = false;
+      // apartado numerado: empieza párrafo nuevo y conserva su número
+      if (numbered.test(l) && buf.length && /[.:;]$/.test(buf[buf.length - 1])) flush();
+      buf.push(l);
+    });
     flush();
   }
   return out;
@@ -2412,7 +2600,7 @@ async function ocrAll(pages, signal) {
       let blocks;
       // Cancelar responde al momento aunque el lector tarde en enterarse
       const stop = new Promise((_, rej) => { if (signal.aborted) rej({ code: 'cancelled' }); signal.addEventListener('abort', () => rej({ code: 'cancelled' }), { once: true }); });
-      try { blocks = await Promise.race([eng === 'claude' ? ocrClaude(p, signal) : ocrLocal(p, t => busy(t, cancel)), stop]); }
+      try { blocks = await Promise.race([eng === 'claude' ? ocrClaude(p, signal) : ocrLocal(p, t => busy(t, cancel), st => busy(`Leyendo el texto… página ${i + 1} de ${pages.length} (${st})`, cancel)), stop]); }
       catch (e) { if (signal.aborted) throw { code: 'cancelled' }; throw e; }
       if (signal.aborted) throw { code: 'cancelled' };
       ocrCache.set(key, blocks);
@@ -3302,7 +3490,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(t
 })();
 
 // Para las pruebas automáticas
-window.__njs = { detectLang, translateBlocks, toBraille, braillePages, toBRF, makeBrailleDOCX, tidyReport, tidyText, plainText, reportOK, wopt, outsideOdd, setDebug: () => { window.__njsDebug = {}; }, jpegInfo, bigDecode, makeDOCX, blocksFromPlain, ocrAll: (...a) => ocrAll(...a), get format() { return format; }, textOrientation, background, detectQuad, sideSupport, edgeMap, regionQuad, lineQuad, refineQuad, scoreQuad, aspectRatio, warp, enhance, makePDF, watermark, homography,
+window.__njs = { colourDropout, ocrText, ocrLocalText: async p => (await ocrLocal(p)).map(b => b.text).join('\n'), ocrImage: (p, ...a) => pageImageForOCR(p, ...a), detectLang, translateBlocks, toBraille, braillePages, toBRF, makeBrailleDOCX, tidyReport, tidyText, plainText, reportOK, wopt, outsideOdd, setDebug: () => { window.__njsDebug = {}; }, jpegInfo, bigDecode, makeDOCX, blocksFromPlain, ocrAll: (...a) => ocrAll(...a), get format() { return format; }, textOrientation, background, detectQuad, sideSupport, edgeMap, regionQuad, lineQuad, refineQuad, scoreQuad, aspectRatio, warp, enhance, makePDF, watermark, homography,
   get doc() { return doc; }, get chain() { return chain; }, onFiles, setPending: t => { pending = t; }, setQuality: k => { quality = k; },
   buildPDF: () => buildPDF().then(r => r.pdf).finally(() => busy(false)), encCache };
 })();
