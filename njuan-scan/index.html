@@ -373,7 +373,7 @@ const QUALITY = {
 const QORDER = ['alta', 'normal', 'ligera'];
 const FILTERS = [['auto', 'Mejorado'], ['bw', 'B/N'], ['gray', 'Grises'], ['color', 'Original']];
 const FULL = [[0, 0], [1, 0], [1, 1], [0, 1]];
-const WATERMARK = 'Njuan';
+const WATERMARK = 'JJSCANER';
 const IN_FRAME = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
 
 const ls = {
@@ -1526,7 +1526,7 @@ function rotate(c, rot) {
   return o;
 }
 function watermark(c) {
-  // Marca de agua "Njuan": diminuta, gris muy claro, esquina inferior derecha.
+  // Marca de agua "JJSCANER": diminuta, gris muy claro, esquina inferior derecha.
   const W = c.width, H = c.height, x = c.getContext('2d');
   const fs = Math.max(9, Math.round(Math.min(W, H) * 0.012));
   const mx = Math.round(W * 0.035), my = Math.round(Math.min(H * 0.02, W * 0.03));
@@ -3004,7 +3004,7 @@ function makeDOCX(pagesBlocks, title, opts = {}) {
   });
   const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
   const docx = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${W}><w:body>${body.join('')}<w:sectPr><w:footerReference w:type="default" r:id="rIdF"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1418" w:right="1418" w:bottom="1418" w:left="1418" w:header="709" w:footer="567" w:gutter="0"/></w:sectPr></w:body></w:document>`;
-  // marca de agua: "Njuan" diminuto y gris muy claro en el pie de cada folio (en el informe, además, el número de página)
+  // marca de agua: "JJSCANER" diminuto y gris muy claro en el pie de cada folio (en el informe, además, el número de página)
   const fld = (instr, v) => `<w:fldSimple w:instr="${instr}"><w:r><w:rPr><w:color w:val="808080"/><w:sz w:val="18"/></w:rPr><w:t>${v}</w:t></w:r></w:fldSimple>`;
   const gray = t => `<w:r><w:rPr><w:color w:val="808080"/><w:sz w:val="18"/></w:rPr><w:t xml:space="preserve">${t}</w:t></w:r>`;
   const pageNo = rep ? `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="0"/></w:pPr>${gray(L.page + ' ')}${fld('PAGE', '1')}${gray(' ' + L.of + ' ')}${fld('NUMPAGES', '1')}</w:p>` : '';
