@@ -101,6 +101,18 @@ h2{font:600 13px/1.2 var(--f-body);letter-spacing:.08em;text-transform:uppercase
 .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 .seg button[aria-pressed="true"] small{color:inherit;opacity:.85}
 .hint{font-size:13px;color:var(--muted);margin:0}
+.wsum b{color:var(--ink);font-weight:600}
+.link{color:var(--accent);font-weight:600;text-decoration:underline;padding:6px 2px;min-height:32px}
+.wopts{display:flex;flex-direction:column;gap:8px}
+.wopt{display:grid;grid-template-columns:22px 1fr;gap:2px 10px;align-items:start;text-align:left;padding:12px 14px;border-radius:14px;border:1.5px solid var(--line);background:var(--bg);color:var(--ink)}
+.wopt::before{content:"";grid-row:1/3;width:18px;height:18px;margin-top:2px;border-radius:50%;border:2px solid var(--muted);box-sizing:border-box}
+.wopt[aria-checked="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.wopt[aria-checked="true"]::before{border:6px solid var(--accent)}
+.wopt b{font-size:15.5px}
+.wopt small{grid-column:2;font-size:13px;color:var(--muted);line-height:1.3}
+.sheet .optl{display:block;margin:4px 0 6px;font-size:13px;font-weight:600;color:var(--muted)}
+.sheet .chips .chip{min-height:40px;padding:0 14px}
+.sheet.tall{max-height:92%;overflow-y:auto}
 .helpbtn{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 14px;border-radius:22px;background:var(--surface);border:1.5px solid var(--line);font-weight:600;font-size:14px;flex:none}
 .helpbtn svg.i{width:20px;height:20px}
 .guide{display:flex;flex-direction:column;gap:12px;padding-bottom:12px}
@@ -393,6 +405,18 @@ try {
 } catch (e) {}
 const ocrEngine = () => (sampleNS && sampleImgs) ? 'claude' : (!IN_FRAME ? 'local' : null);
 let format = 'pdf';   // cada escaneo nuevo empieza en PDF
+/* Cómo quieres el Word: estilo, tipo de letra y tamaño (se recuerda para la próxima vez) */
+const WSTYLES = [
+  ['orig', 'Como el original', 'Respeta los saltos de línea, centrados, negritas y una página por hoja. Para formularios, cartas y facturas.'],
+  ['informe', 'Informe limpio', 'Corrige la puntuación y los espacios, une el texto en párrafos, separa por apartados con subtítulos, texto justificado y páginas numeradas. No cambia cifras, nombres ni fechas.'],
+  ['texto', 'Solo texto', 'Texto seguido sin estilos ni saltos de página. Para copiar y pegar en otro sitio.']
+];
+const WFONTS = [['Calibri', 'Calibri'], ['Arial', 'Arial'], ['Times New Roman', 'Times'], ['Georgia', 'Georgia']];
+const wopt = {
+  style: WSTYLES.some(s => s[0] === ls.get('ws')) ? ls.get('ws') : 'orig',
+  font: WFONTS.some(f => f[0] === ls.get('wf')) ? ls.get('wf') : 'Calibri',
+  size: ls.get('wz') === 'big' ? 'big' : 'normal'
+};
 const camLive = !IN_FRAME && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && window.isSecureContext;
 let camLiveFailed = false;
 if (camLive) $('#batchCopy').textContent = 'Muchas hojas seguidas. Disparas sin parar, recorte automático.';
@@ -1993,6 +2017,7 @@ const GUIDE = [
     'Original: la foto tal cual, solo recortada.']],
   ['Formato y calidad', ['PDF: el documento tal cual, con imagen. Calidad Alta (imprimir), Normal (día a día) o Ligera (WhatsApp y correo). Se muestra el tamaño exacto.',
     'Word editable: el texto de cada hoja (títulos, párrafos, listas y tablas) en un archivo .docx que puedes cambiar en Word, Google Docs o Pages. La primera vez pide permiso.',
+    'Al tocar Word eliges cómo lo quieres: Como el original (mismos saltos de línea y centrados, una página por hoja), Informe limpio (puntuación corregida, párrafos y apartados con subtítulos, justificado y con páginas numeradas) o Solo texto (para copiar y pegar). También el tipo y el tamaño de letra. Se recuerda para la próxima vez; Cambiar lo vuelve a abrir.',
     'Cada escaneo nuevo empieza en PDF.']],
   ['Enviar y guardar', ['Enviar abre el menú de compartir del móvil: WhatsApp, correo, Drive…',
     'Guardar deja el archivo en el móvil.',
@@ -2254,15 +2279,25 @@ function renderFormat() {
     const sp = document.createElement('span'); sp.textContent = label;
     const sm = document.createElement('small'); sm.textContent = sub;
     b.append(sp, sm);
-    b.addEventListener('click', () => { format = k; renderFormat(); });
+    // Word abre la ventana para elegir cómo quieres el documento (también si ya estaba elegido)
+    b.addEventListener('click', () => { if (k === 'docx') wordSheet(); else { format = k; renderFormat(); } });
     box.append(b);
   }
   $('#qbox').hidden = format !== 'pdf';
   const hint = $('#fmtHint');
   hint.hidden = format !== 'docx';
-  if (format === 'docx') hint.textContent = eng === 'claude'
-    ? 'Claude lee el texto de cada hoja (títulos, párrafos, listas y tablas) y lo pone en un .docx para Word, Google Docs o Pages. La primera vez te pedirá permiso; usa tu cuenta de Claude y tarda unos segundos por página.'
-    : 'El móvil lee el texto de cada hoja y lo pone en un .docx para Word, Google Docs o Pages. La primera vez descarga el lector de texto (unos 4 MB, hace falta internet).';
+  if (format === 'docx') {
+    hint.textContent = '';
+    const st = WSTYLES.find(s => s[0] === wopt.style), fn = WFONTS.find(f => f[0] === wopt.font);
+    const row = document.createElement('span'); row.className = 'wsum';
+    const tx = document.createElement('b'); tx.textContent = `${st[1]} · ${fn[1]} · ${wopt.size === 'big' ? 'letra grande' : 'letra normal'}`;
+    const ch = document.createElement('button'); ch.className = 'link'; ch.id = 'wChange'; ch.textContent = 'Cambiar';
+    ch.addEventListener('click', wordSheet);
+    row.append(tx, ' ', ch);
+    hint.append(row, document.createElement('br'), eng === 'claude'
+      ? 'Claude lee el texto de cada hoja y lo pone en un .docx para Word, Google Docs o Pages. La primera vez te pedirá permiso; tarda unos segundos por página.'
+      : 'El móvil lee el texto de cada hoja y lo pone en un .docx para Word, Google Docs o Pages. La primera vez descarga el lector de texto (unos 4 MB, hace falta internet).');
+  }
   const lbl = format === 'docx' ? 'Word' : 'PDF';
   $('#bSend').setAttribute('aria-label', 'Enviar ' + lbl); $('#bSave').setAttribute('aria-label', 'Guardar ' + lbl);
   // el botón dice qué se va a enviar; en Word, "Guardar" se queda en icono para que quepa
@@ -2287,8 +2322,9 @@ const ocrCache = new Map(); // página/versión → bloques de texto
 const OCR_PROMPT = `Esta imagen es una página escaneada de un documento (probablemente en español).
 Transcribe TODO su texto, exactamente como está, en orden de lectura. No traduzcas, no resumas, no corrijas ni inventes nada; conserva tildes, mayúsculas, números, importes, fechas y signos. Si algo no se lee, escribe [ilegible]. Ignora sellos o marcas de agua decorativas si no tienen texto útil.
 Responde SOLO con JSON con esta forma:
-{"blocks":[{"t":"h1","text":"Título"},{"t":"p","text":"Párrafo completo en una sola línea"},{"t":"li","text":"Elemento de lista"},{"t":"table","rows":[["celda","celda"],["celda","celda"]]}]}
-Tipos: "h1" título principal, "h2" subtítulo, "p" párrafo (une las líneas de un mismo párrafo), "li" elemento de lista, "table" tabla (filas y celdas). Si la página no tiene texto: {"blocks":[]}.`;
+{"blocks":[{"t":"h1","text":"Título","align":"center"},{"t":"p","text":"Primera línea del párrafo\nsegunda línea tal como está cortada en el papel"},{"t":"p","text":"Texto en negrita","b":true},{"t":"li","text":"Elemento de lista"},{"t":"table","rows":[["celda","celda"],["celda","celda"]]}]}
+Tipos: "h1" título principal, "h2" subtítulo, "p" párrafo, "li" elemento de lista, "table" tabla (filas y celdas).
+Dentro de un párrafo, separa con \n las líneas tal como están cortadas en el papel. Añade "align":"center" o "align":"right" solo si ese bloque está centrado o alineado a la derecha, y "b":true solo si está todo en negrita. Si la página no tiene texto: {"blocks":[]}.`;
 async function pageImageForOCR(p, maxLong = 2000, q = 0.85) {
   const c0 = await blobToCanvas(p.out); const c = scaleCanvas(c0, maxLong); if (c !== c0) free(c0);
   const b = await toBlob(c, 'image/jpeg', q); free(c); return b;
@@ -2302,7 +2338,14 @@ function cleanBlocks(raw) {
       const cell = c => c == null ? '' : Array.isArray(c) ? c.map(cell).join(' ') : typeof c === 'object' ? (c.text != null ? String(c.text) : Object.values(c).map(cell).join(' ')) : String(c);
       const rows = (Array.isArray(b.rows) ? b.rows : []).filter(Array.isArray).map(r => r.map(cell));
       if (rows.length) out.push({ t, rows });
-    } else { const text = (typeof b.text === 'object' && b.text ? JSON.stringify(b.text) : String(b.text == null ? '' : b.text)).trim(); if (text) out.push({ t, text }); }
+    } else {
+      const text = (typeof b.text === 'object' && b.text ? JSON.stringify(b.text) : String(b.text == null ? '' : b.text)).replace(/\r/g, '').trim();
+      if (!text) continue;
+      const o = { t, text };
+      if (b.align === 'center' || b.align === 'right') o.align = b.align;
+      if (b.b === true) o.b = true;
+      out.push(o);
+    }
   }
   return out;
 }
@@ -2336,7 +2379,7 @@ function blocksFromPlain(text) {
     let buf = [];
     const flush = () => {
       if (!buf.length) return;
-      const joined = buf.join(' ').replace(/-\s+(?=[a-záéíóúñ])/g, '');
+      const joined = buf.join('\n');
       const isTitle = buf.length === 1 && joined.length < 60 && joined === joined.toUpperCase() && /[A-ZÁÉÍÓÚÑ]/.test(joined);
       out.push({ t: isTitle ? 'h1' : 'p', text: joined }); buf = [];
     };
@@ -2367,6 +2410,118 @@ async function ocrAll(pages, signal) {
   }
   return res;
 }
+/* --- Estilos del Word: Como el original / Informe limpio / Solo texto --- */
+// une las líneas del papel en un párrafo seguido (quita guiones de corte de palabra)
+const flatText = t => String(t).replace(/(\p{L})-\n(?=\p{Ll})/gu, '$1').replace(/[ \t]*\n[ \t]*/g, ' ');
+const ABBR = new Set(['etc', 'pág', 'págs', 'núm', 'art', 'arts', 'aprox', 'tel', 'telf', 'avda', 'dcha', 'izq', 'izda', 'ej', 'cía', 'dña', 'sra', 'srta', 'ref', 'vol', 'cap', 'fig']);
+function tidyText(t) {
+  t = flatText(t).replace(/[ \t ]+/g, ' ').trim()
+    .replace(/(\d) ,(\d)/g, '$1, $2')                // "14 ,3ºB" → "14, 3ºB" (no toca 650,00)
+    .replace(/\s+([,.;:!?)\]»])/g, '$1')          // sin espacio antes de la puntuación
+    .replace(/([(\[«¿¡])\s+/g, '$1')               // ni después de abrir
+    .replace(/([,;:])(?=\p{L})/gu, '$1 ')          // "a,b" → "a, b" (no toca 1,5 ni 10:30)
+    .replace(/(\p{Ll}{2}[.!?])(?=\p{Lu})/gu, '$1 ') // "fin.Empieza" → "fin. Empieza"
+    .replace(/(\d{2}[.!?])(?=\p{L}{3})/gu, '$1 ')     // "2026.reunidos" → "2026. Reunidos"
+    .replace(/ {2,}/g, ' ');
+  // mayúscula al empezar frase (salvo abreviaturas)
+  t = t.replace(/(^|[.!?] )(\p{Ll})/gu, (m, a, c, off) => {
+    if (a) { const w = (t.slice(0, off).match(/(\p{L}+|\d{2,})$/u) || [])[1]; if (!w || w.length < 3 && !/\d/.test(w) || ABBR.has(w.toLowerCase())) return m; }
+    return a + c.toUpperCase();
+  });
+  return t;
+}
+const ENDP = /[.!?:;…»”")\]]$/;
+const HEADRX = /^((\d+(\.\d+)*|[IVXLC]+|[a-z])[.)\-–]\s+\S|(PRIMER|SEGUND|TERCER|CUART|QUINT|SEXT|SÉPTIM|OCTAV|NOVEN|DÉCIM)[OA]S?\b|(CAPÍTULO|ARTÍCULO|CLÁUSULA|ANEXO|SECCIÓN|Capítulo|Artículo|Cláusula|Anexo|Sección)\s)/;
+function looksHeading(t) {
+  if (t.length > 80 || t.split(/\s+/).length > 12 || /[.,;]$/.test(t)) return false;
+  const letters = t.replace(/[^\p{L}]/gu, '');
+  return (letters.length >= 3 && letters === letters.toUpperCase()) || HEADRX.test(t) || (/:$/.test(t) && t.length <= 60);
+}
+// Informe: un solo documento seguido, párrafos completos, apartados con subtítulo y puntuación arreglada
+function tidyReport(pagesBlocks) {
+  const all = [];
+  for (const blocks of pagesBlocks) {
+    blocks.forEach((b, i) => {
+      const prev = all[all.length - 1];
+      // el párrafo que sigue en la página siguiente se une al anterior
+      if (i === 0 && b.t === 'p' && prev && prev.t === 'p' && !ENDP.test(flatText(prev.text).trim()) && /^\p{Ll}/u.test(flatText(b.text).trim())) { prev.text = flatText(prev.text).trim() + ' ' + flatText(b.text).trim(); return; }
+      all.push(b.t === 'table' ? { t: 'table', rows: b.rows } : { t: b.t, text: b.text });
+    });
+  }
+  const out = [];
+  for (const b of all) {
+    if (b.t === 'table') { out.push({ t: 'table', rows: b.rows.map(r => r.map(c => flatText(c).replace(/\s+/g, ' ').trim())) }); continue; }
+    let text = tidyText(b.text);
+    if (!text) continue;
+    let t = b.t;
+    if (t === 'p' && looksHeading(text)) t = 'h2';
+    if (t === 'h1' && out.some(o => o.t === 'h1')) t = 'h2';
+    if (t === 'h1' || t === 'h2') { out.push({ t, text: text.replace(/\s*:$/, '') }); continue; }
+    if (t === 'p' && text.length > 40 && /[\p{L}\d]$/u.test(text)) text += '.';
+    if (t === 'p' && text.length > 900) {
+      // párrafo enorme → varios párrafos por frases
+      let cur = '';
+      for (const f of text.split(/(?<=[.!?])\s+(?=[\p{Lu}¿¡])/u)) { cur = cur ? cur + ' ' + f : f; if (cur.length > 450) { out.push({ t: 'p', text: cur }); cur = ''; } }
+      if (cur) out.push({ t: 'p', text: cur });
+      continue;
+    }
+    out.push({ t, text });
+  }
+  return out;
+}
+function plainText(pagesBlocks) {
+  const out = [];
+  for (const blocks of pagesBlocks) for (const b of blocks) {
+    if (b.t === 'table') { for (const r of b.rows) out.push({ t: 'p', text: r.map(c => flatText(c).trim()).join('\t') }); }
+    else out.push({ t: b.t === 'li' ? 'li' : 'p', text: flatText(b.text).replace(/ {2,}/g, ' ').trim() });
+  }
+  return out;
+}
+const REPORT_PROMPT = `Te paso el texto leído de un documento escaneado, como JSON de bloques (puede ser solo una parte del documento). Devuélvelo preparado como un informe limpio:
+- Corrige solo errores evidentes de lectura, de puntuación, de espacios y de mayúsculas.
+- Une las líneas cortadas en párrafos completos y separa en párrafos distintos donde cambie la idea.
+- Donde empiece un apartado nuevo pon un subtítulo breve ("h2"): si el texto ya trae un título para ese apartado úsalo; si no, crea uno de pocas palabras tomadas del propio texto.
+- Mantén las listas como "li" y las tablas como "table".
+- NO resumas, NO añadas información, NO quites nada y NO cambies cifras, importes, fechas, nombres ni direcciones. Mismo idioma.
+Responde SOLO con JSON con esta forma: {"blocks":[{"t":"h2","text":"..."},{"t":"p","text":"..."}]} (tipos: h1, h2, p, li, table con "rows").
+Texto:
+`;
+const reportCache = new Map();
+const numsOf = bl => { const m = new Map(); for (const b of bl) for (const x of JSON.stringify(b.t === 'table' ? b.rows : b.text).match(/\d+/g) || []) m.set(x, (m.get(x) || 0) + 1); return m; };
+const wordsOf = bl => bl.reduce((n, b) => n + (b.t === 'table' ? b.rows.flat().join(' ') : b.text).split(/\s+/).filter(Boolean).length, 0);
+// Comprueba que Claude no se ha inventado ni quitado nada: mismas cifras y casi las mismas palabras
+function reportOK(inp, out) {
+  if (!out.length) return false;
+  const a = numsOf(inp), b = numsOf(out);
+  for (const [k, n] of b) if ((a.get(k) || 0) < n) return false;
+  let miss = 0; for (const [k, n] of a) miss += Math.max(0, n - (b.get(k) || 0));
+  const wi = wordsOf(inp), wo = wordsOf(out);
+  return miss <= 1 && wo >= wi * 0.88 && wo <= wi * 1.25 + 20;
+}
+async function reportClaude(pagesBlocks, signal) {
+  const base = tidyReport(pagesBlocks);  // ya ordenado a mano: si Claude falla en algún trozo, se queda este
+  const chunks = []; let cur = [], size = 0;
+  for (const b of base) { const n = JSON.stringify(b).length; if (cur.length && size + n > 9000) { chunks.push(cur); cur = []; size = 0; } cur.push(b); size += n; }
+  if (cur.length) chunks.push(cur);
+  const out = [];
+  for (let i = 0; i < chunks.length; i++) {
+    if (signal.aborted) throw { code: 'cancelled' };
+    const key = JSON.stringify(chunks[i]);
+    if (!reportCache.has(key)) {
+      busy(chunks.length > 1 ? `Claude está ordenando el texto… parte ${i + 1} de ${chunks.length}` : 'Claude está ordenando el texto…', () => ctl && ctl.abort());
+      let res = chunks[i];
+      try {
+        const stop = new Promise((_, rej) => { if (signal.aborted) rej({ code: 'cancelled' }); signal.addEventListener('abort', () => rej({ code: 'cancelled' }), { once: true }); });
+        const raw = await Promise.race([sampleNS.json(REPORT_PROMPT + key, { modelTier: 'default', signal }), stop]);
+        const got = cleanBlocks(raw).map(b => b.t === 'table' ? b : { t: b.t, text: flatText(b.text).replace(/ {2,}/g, ' ').trim() });
+        if (reportOK(chunks[i], got)) res = got;
+      } catch (e) { if (signal.aborted || (e && e.code === 'cancelled')) throw { code: 'cancelled' }; }
+      reportCache.set(key, res);
+    }
+    out.push(...reportCache.get(key));
+  }
+  return out;
+}
 /* --- .docx mínimo, sin librerías (zip sin comprimir) --- */
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 function crc32(b) { let c = 0xffffffff; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
@@ -2393,31 +2548,62 @@ function zip(files) {
   return new Blob([...parts, ...central, new Uint8Array(e.buffer)], { type: DOCX_TYPE });
 }
 const xesc = s => String(s).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f￾￿]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-// los saltos de línea dentro de un párrafo o celda se conservan
-const wrun = text => '<w:r>' + String(text).split(/\r?\n|\u2028/).map(t => `<w:t xml:space="preserve">${xesc(t)}</w:t>`).join('<w:br/>') + '</w:r>';
-function makeDOCX(pagesBlocks, title) {
+// los saltos de línea dentro de un párrafo o celda se conservan; los tabuladores también
+const wrun = (text, rpr = '') => '<w:r>' + (rpr ? `<w:rPr>${rpr}</w:rPr>` : '') + String(text).split(/\r?\n|\u2028/).map(l => l.split('\t').map(t => `<w:t xml:space="preserve">${xesc(t)}</w:t>`).join('<w:tab/>')).join('<w:br/>') + '</w:r>';
+/**
+ * pagesBlocks: bloques por página. opts.style: 'orig' (una página por hoja, saltos de línea, centrados, negritas),
+ * 'informe' (texto seguido ordenado, portada con título, justificado, páginas numeradas) o 'texto' (sin estilos).
+ * En 'informe' y 'texto' llegan ya preparados en una sola "página".
+ */
+function makeDOCX(pagesBlocks, title, opts = {}) {
+  const style = opts.style || 'orig', font = opts.font || 'Calibri', big = opts.size === 'big';
+  const rep = style === 'informe', plain = style === 'texto';
   const body = [];
+  if (rep) {
+    body.push(`<w:p><w:pPr><w:pStyle w:val="Portada"/></w:pPr>${wrun(title)}</w:p>`);
+    const d = new Date(), n = opts.pages || pagesBlocks.length;
+    body.push(`<w:p><w:pPr><w:pStyle w:val="Nota"/></w:pPr>${wrun(`Escaneado el ${d.toLocaleDateString('es-ES')} · ${n} ${n === 1 ? 'página' : 'páginas'}`)}</w:p>`);
+  }
   pagesBlocks.forEach((blocks, i) => {
     if (i > 0) body.push('<w:p><w:r><w:br w:type="page"/></w:r></w:p>');
     if (!blocks.length) body.push(`<w:p><w:pPr><w:pStyle w:val="Nota"/></w:pPr>${wrun('(Página ' + (i + 1) + ' sin texto)')}</w:p>`);
     for (const b of blocks) {
       if (b.t === 'table') {
         const cols = Math.max(1, ...b.rows.map(r => r.length)), wcol = Math.floor(9000 / cols);
-        body.push('<w:tbl><w:tblPr><w:tblStyle w:val="Tabla"/><w:tblW w:w="0" w:type="auto"/><w:tblBorders>' + ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(k => `<w:${k} w:val="single" w:sz="4" w:space="0" w:color="999999"/>`).join('') + '</w:tblBorders></w:tblPr>');
+        body.push('<w:tbl><w:tblPr><w:tblStyle w:val="Tabla"/><w:tblW w:w="0" w:type="auto"/><w:tblBorders>' + ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(k => `<w:${k} w:val="single" w:sz="4" w:space="0" w:color="${rep ? 'BFBFBF' : '999999'}"/>`).join('') + '</w:tblBorders></w:tblPr>');
         body.push('<w:tblGrid>' + Array.from({ length: cols }, () => `<w:gridCol w:w="${wcol}"/>`).join('') + '</w:tblGrid>');
-        for (const r of b.rows) { body.push('<w:tr>'); for (let k = 0; k < cols; k++) body.push(`<w:tc><w:tcPr><w:tcW w:w="${wcol}" w:type="dxa"/></w:tcPr><w:p>${wrun(r[k] || '')}</w:p></w:tc>`); body.push('</w:tr>'); }
+        b.rows.forEach((r, ri) => {
+          const head = rep && ri === 0 && b.rows.length > 1;
+          body.push('<w:tr>' + (head ? '<w:trPr><w:tblHeader/></w:trPr>' : ''));
+          for (let k = 0; k < cols; k++) body.push(`<w:tc><w:tcPr><w:tcW w:w="${wcol}" w:type="dxa"/>${head ? '<w:shd w:val="clear" w:color="auto" w:fill="EEF1F6"/>' : ''}</w:tcPr><w:p><w:pPr><w:spacing w:after="40"/><w:jc w:val="left"/></w:pPr>${wrun(r[k] || '', head ? '<w:b/>' : '')}</w:p></w:tc>`);
+          body.push('</w:tr>');
+        });
         body.push('</w:tbl><w:p/>');
       } else {
-        const st = { h1: 'Titulo1', h2: 'Titulo2', li: 'Lista', p: '' }[b.t];
-        body.push(`<w:p>${st ? `<w:pPr><w:pStyle w:val="${st}"/></w:pPr>` : ''}${b.t === 'li' ? wrun('• ') : ''}${wrun(b.text)}</w:p>`);
+        const st = plain ? '' : { h1: 'Titulo1', h2: 'Titulo2', li: 'Lista', p: '' }[b.t];
+        const ppr = (st ? `<w:pStyle w:val="${st}"/>` : '') + (style === 'orig' && b.align ? `<w:jc w:val="${b.align}"/>` : '');
+        const rpr = style === 'orig' && b.b ? '<w:b/>' : '';
+        body.push(`<w:p>${ppr ? `<w:pPr>${ppr}</w:pPr>` : ''}${b.t === 'li' ? wrun('•\t', rpr) : ''}${wrun(b.text, rpr)}</w:p>`);
       }
     }
   });
   const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
   const docx = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${W}><w:body>${body.join('')}<w:sectPr><w:footerReference w:type="default" r:id="rIdF"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1418" w:right="1418" w:bottom="1418" w:left="1418" w:header="709" w:footer="567" w:gutter="0"/></w:sectPr></w:body></w:document>`;
-  // marca de agua: "Njuan" diminuto y gris muy claro en el pie de cada folio
-  const footer = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${W}><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:i/><w:color w:val="D9D9D9"/><w:sz w:val="12"/></w:rPr><w:t>${WATERMARK}</w:t></w:r></w:p></w:ftr>`;
-  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:lang w:val="es-ES"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Titulo1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Titulo2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="80"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Lista"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="60"/><w:ind w:left="360" w:hanging="220"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Nota"><w:name w:val="Nota"/><w:basedOn w:val="Normal"/><w:rPr><w:i/><w:color w:val="808080"/></w:rPr></w:style><w:style w:type="table" w:styleId="Tabla"><w:name w:val="Table Grid"/><w:tblPr><w:tblCellMar><w:left w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
+  // marca de agua: "Njuan" diminuto y gris muy claro en el pie de cada folio (en el informe, además, el número de página)
+  const fld = (instr, v) => `<w:fldSimple w:instr="${instr}"><w:r><w:rPr><w:color w:val="808080"/><w:sz w:val="18"/></w:rPr><w:t>${v}</w:t></w:r></w:fldSimple>`;
+  const gray = t => `<w:r><w:rPr><w:color w:val="808080"/><w:sz w:val="18"/></w:rPr><w:t xml:space="preserve">${t}</w:t></w:r>`;
+  const pageNo = rep ? `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="0"/></w:pPr>${gray('Página ')}${fld('PAGE', '1')}${gray(' de ')}${fld('NUMPAGES', '1')}</w:p>` : '';
+  const footer = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${W}>${pageNo}<w:p><w:pPr><w:jc w:val="right"/><w:spacing w:after="0"/></w:pPr><w:r><w:rPr><w:i/><w:color w:val="D9D9D9"/><w:sz w:val="12"/></w:rPr><w:t>${WATERMARK}</w:t></w:r></w:p></w:ftr>`;
+  const sz = big ? 26 : 22, f = xesc(font), H = rep ? '<w:color w:val="1F3864"/>' : '';
+  const normalP = rep ? '<w:pPr><w:jc w:val="both"/><w:spacing w:after="160" w:line="300" w:lineRule="auto"/></w:pPr>' : plain ? '<w:pPr><w:spacing w:after="120"/></w:pPr>' : '';
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:cs="${f}" w:eastAsia="${f}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:lang w:val="es-ES"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="${style === 'orig' ? 80 : 120}" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>`
+    + `<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/>${normalP}</w:style>`
+    + `<w:style w:type="paragraph" w:styleId="Portada"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:jc w:val="left"/><w:pBdr><w:bottom w:val="single" w:sz="8" w:space="6" w:color="1F3864"/></w:pBdr><w:spacing w:before="0" w:after="80"/></w:pPr><w:rPr><w:b/><w:color w:val="1F3864"/><w:sz w:val="${sz + 22}"/></w:rPr></w:style>`
+    + `<w:style w:type="paragraph" w:styleId="Titulo1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:jc w:val="left"/><w:spacing w:before="${rep ? 360 : 240}" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/>${H}<w:sz w:val="${sz + 10}"/></w:rPr></w:style>`
+    + `<w:style w:type="paragraph" w:styleId="Titulo2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:jc w:val="left"/><w:spacing w:before="${rep ? 280 : 200}" w:after="80"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/>${H}<w:sz w:val="${sz + 4}"/></w:rPr></w:style>`
+    + `<w:style w:type="paragraph" w:styleId="Lista"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="60"/><w:tabs><w:tab w:val="left" w:pos="360"/></w:tabs><w:ind w:left="360" w:hanging="300"/></w:pPr></w:style>`
+    + `<w:style w:type="paragraph" w:styleId="Nota"><w:name w:val="Nota"/><w:basedOn w:val="Normal"/><w:pPr><w:jc w:val="left"/><w:spacing w:after="${rep ? 360 : 120}"/></w:pPr><w:rPr><w:i/><w:color w:val="808080"/></w:rPr></w:style>`
+    + `<w:style w:type="table" w:styleId="Tabla"><w:name w:val="Table Grid"/><w:tblPr><w:tblCellMar><w:top w:w="40" w:type="dxa"/><w:left w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
   const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
   return zip([
     ['[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`],
@@ -2435,7 +2621,11 @@ async function buildDOCX() {
   if (!pages.length) throw new Error('vacío');
   ctl = new AbortController();
   const blocks = await ocrAll(pages, ctl.signal);
-  return { file: makeDOCX(blocks, doc.name.trim() || defaultName()), skipped: doc.pages.length - pages.length };
+  const opts = { ...wopt, pages: pages.length };
+  let shaped = blocks;
+  if (wopt.style === 'informe') shaped = [ocrEngine() === 'claude' ? await reportClaude(blocks, ctl.signal) : tidyReport(blocks)];
+  else if (wopt.style === 'texto') shaped = [plainText(blocks)];
+  return { file: makeDOCX(shaped, doc.name.trim() || defaultName(), opts), skipped: doc.pages.length - pages.length };
 }
 
 /* ---------- Exportar / enviar ---------- */
@@ -2713,6 +2903,58 @@ function closeSheet(cancelled) {
   const f = sheetCancel; sheetCancel = null; if (cancelled && f) f();
   if (sheetBack && document.contains(sheetBack)) sheetBack.focus(); sheetBack = null;
 }
+function wordSheet() {
+  closeSheet(true);
+  sheetBack = document.activeElement; sheetCancel = null;
+  const pick = { ...wopt };
+  const scrim = document.createElement('div'); scrim.className = 'scrim';
+  const sh = document.createElement('div'); sh.className = 'sheet tall'; sh.id = 'wsheet'; sh.setAttribute('role', 'dialog'); sh.setAttribute('aria-modal', 'true'); sh.setAttribute('aria-label', '¿Cómo quieres el Word?');
+  const h = document.createElement('h3'); h.textContent = '¿Cómo quieres el Word?'; sh.append(h);
+  const lab = t => { const l = document.createElement('span'); l.className = 'optl'; l.textContent = t; return l; };
+  sh.append(lab('Estilo del documento'));
+  const list = document.createElement('div'); list.className = 'wopts'; list.setAttribute('role', 'radiogroup');
+  for (const [k, name, desc] of WSTYLES) {
+    const b = document.createElement('button'); b.className = 'wopt'; b.dataset.k = k; b.setAttribute('role', 'radio');
+    const t = document.createElement('b'); t.textContent = name; const d = document.createElement('small'); d.textContent = desc;
+    b.append(t, d); list.append(b);
+    b.addEventListener('click', () => { pick.style = k; paint(); });
+  }
+  sh.append(list);
+  const chipRow = (items, key) => {
+    const box = document.createElement('div'); box.className = 'chips';
+    for (const [k, label, fam] of items) {
+      const c = document.createElement('button'); c.className = 'chip'; c.dataset.k = k; c.textContent = label;
+      if (fam) c.style.fontFamily = fam;
+      c.addEventListener('click', () => { pick[key] = k; paint(); }); box.append(c);
+    }
+    return box;
+  };
+  sh.append(lab('Tipo de letra'));
+  const fonts = chipRow(WFONTS.map(([k, l]) => [k, l, `"${k}", serif`]), 'font'); sh.append(fonts);
+  sh.append(lab('Tamaño de letra'));
+  const sizes = chipRow([['normal', 'Normal (11)'], ['big', 'Grande (13)']], 'size'); sh.append(sizes);
+  function paint() {
+    for (const b of list.children) b.setAttribute('aria-checked', String(b.dataset.k === pick.style));
+    for (const c of fonts.children) c.setAttribute('aria-pressed', String(c.dataset.k === pick.font));
+    for (const c of sizes.children) c.setAttribute('aria-pressed', String(c.dataset.k === pick.size));
+  }
+  paint();
+  const ok = document.createElement('button'); ok.className = 'btn pri'; ok.id = 'wOk'; ok.textContent = 'Usar este formato';
+  ok.addEventListener('click', () => {
+    Object.assign(wopt, pick); ls.set('ws', wopt.style); ls.set('wf', wopt.font); ls.set('wz', wopt.size);
+    format = 'docx'; closeSheet(); renderFormat();
+  });
+  const c = document.createElement('button'); c.className = 'btn sec'; c.textContent = 'Cancelar'; c.addEventListener('click', () => closeSheet(true));
+  sh.append(ok, c);
+  scrim.append(sh); scrim.addEventListener('click', e => { if (e.target === scrim) closeSheet(true); });
+  sh.addEventListener('keydown', e => {
+    if (e.key !== 'Tab') return;
+    const bs = sh.querySelectorAll('button'), first = bs[0], last = bs[bs.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+  app.append(scrim); (list.querySelector('[aria-checked="true"]') || ok).focus();
+}
 function sheet(title, text, actions, onCancel) {
   closeSheet(true);
   sheetBack = document.activeElement; sheetCancel = onCancel || null;
@@ -2760,7 +3002,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(t
 })();
 
 // Para las pruebas automáticas
-window.__njs = { outsideOdd, setDebug: () => { window.__njsDebug = {}; }, jpegInfo, bigDecode, makeDOCX, blocksFromPlain, ocrAll: (...a) => ocrAll(...a), get format() { return format; }, textOrientation, background, detectQuad, sideSupport, edgeMap, regionQuad, lineQuad, refineQuad, scoreQuad, aspectRatio, warp, enhance, makePDF, watermark, homography,
+window.__njs = { tidyReport, tidyText, plainText, reportOK, wopt, outsideOdd, setDebug: () => { window.__njsDebug = {}; }, jpegInfo, bigDecode, makeDOCX, blocksFromPlain, ocrAll: (...a) => ocrAll(...a), get format() { return format; }, textOrientation, background, detectQuad, sideSupport, edgeMap, regionQuad, lineQuad, refineQuad, scoreQuad, aspectRatio, warp, enhance, makePDF, watermark, homography,
   get doc() { return doc; }, get chain() { return chain; }, onFiles, setPending: t => { pending = t; }, setQuality: k => { quality = k; },
   buildPDF: () => buildPDF().then(r => r.pdf).finally(() => busy(false)), encCache };
 })();
