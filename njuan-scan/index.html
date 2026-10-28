@@ -394,7 +394,10 @@ function canShareFiles(file) {
 }
 // Chrome en Android solo deja enviar desde la web PDF, imágenes, audio, vídeo y texto: ni Word ni .brf
 const IS_ANDROID = /Android/i.test(navigator.userAgent);
-const shareBlocked = name => IS_ANDROID && !/\.(pdf|txt|jpe?g|png|webp)$/i.test(name);
+// dentro de la app de Android (NjuanAndroid) se envía con el menú Compartir de Android: sin esa limitación
+const NATIVE = window.NjuanAndroid || null;
+const shareBlocked = name => IS_ANDROID && !NATIVE && !/\.(pdf|txt|jpe?g|png|webp)$/i.test(name);
+const blobB64 = b => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(b); });
 const DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const typeOf = name => /\.docx$/i.test(name) ? DOCX_TYPE : /\.(brf|txt)$/i.test(name) ? 'text/plain' : 'application/pdf';
 /* Leer el texto de las hojas (para el Word editable): Claude dentro de claude.ai; en el navegador, OCR en el propio móvil */
@@ -2954,6 +2957,14 @@ async function deliver(blob, filename, action, skipped = 0, alt = {}) {
   const done = (msg) => {
     toast(msg + extra);
   };
+  if (NATIVE) {
+    try {
+      const b64 = await blobB64(blob);
+      if (action === 'share') { if (NATIVE.share(b64, filename, typeOf(filename))) { done('Elige dónde enviarlo'); return 'shared'; } }
+      else if (NATIVE.save(b64, filename, typeOf(filename))) { done('Guardado en Descargas › Njuan Scan'); return 'saved'; }
+    } catch (e) {}
+    toast('No se pudo ' + (action === 'share' ? 'enviar' : 'guardar') + ' el archivo. Vuelve a intentarlo.'); return 'fail';
+  }
   if (action === 'share' && shareBlocked(filename)) return androidBlocked(blob, filename, kind, skipped, alt);
   if (action === 'share' && canShareFiles(file)) {
     try { await navigator.share({ files: [file], title: filename.replace(/\.(pdf|docx)$/i, '') }); done('Enviado'); return 'shared'; }
@@ -3007,6 +3018,12 @@ async function androidBlocked(blob, filename, kind, skipped, alt) {
     + (alt.txt ? `\n\nO envía ahora ${kind === 'Braille' ? 'el mismo braille en un archivo .txt' : 'el mismo texto en un archivo .txt'}, que sí se puede.` : ''), acts, null, 'Cerrar');
   return 'saved';
 }
+// botón Atrás de Android (app nativa): cierra lo que haya abierto; false = salir de la app
+window.__njsBack = () => {
+  if ($('.scrim', app)) { closeSheet(true); return true; }
+  for (const [scr, btn] of [['cam', '#cClose'], ['editor', '#eBack'], ['docv', '#dBack'], ['help', '#hBack']]) if (!$('#' + scr).hidden) { $(btn).click(); return true; }
+  return false;
+};
 $('#bSend').addEventListener('click', () => exportDoc('share'));
 $('#bNew').addEventListener('click', () => startScan(doc ? doc.mode : 'single'));
 $('#bSave').addEventListener('click', () => exportDoc('save'));
