@@ -393,7 +393,7 @@ function canShareFiles(file) {
   } catch (e) { return false; }
 }
 const DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-const typeOf = name => /\.docx$/i.test(name) ? DOCX_TYPE : 'application/pdf';
+const typeOf = name => /\.docx$/i.test(name) ? DOCX_TYPE : /\.brf$/i.test(name) ? 'text/plain' : 'application/pdf';
 /* Leer el texto de las hojas (para el Word editable): Claude dentro de claude.ai; en el navegador, OCR en el propio móvil */
 let sampleNS = null, sampleImgs = false;
 try {
@@ -409,13 +409,15 @@ let format = 'pdf';   // cada escaneo nuevo empieza en PDF
 const WSTYLES = [
   ['orig', 'Como el original', 'Respeta los saltos de línea, centrados, negritas y una página por hoja. Para formularios, cartas y facturas.'],
   ['informe', 'Informe limpio', 'Corrige la puntuación y los espacios, une el texto en párrafos, separa por apartados con subtítulos, texto justificado y páginas numeradas. No cambia cifras, nombres ni fechas.'],
-  ['texto', 'Solo texto', 'Texto seguido sin estilos ni saltos de página. Para copiar y pegar en otro sitio.']
+  ['texto', 'Solo texto', 'Texto seguido sin estilos ni saltos de página. Para copiar y pegar en otro sitio.'],
+  ['braille', 'Braille (para ciegos)', 'Pasa el texto a braille español (signografía de la ONCE), en hojas de 40 caracteres por 25 líneas como el papel braille. Para una impresora braille o una línea braille.']
 ];
 const WFONTS = [['Calibri', 'Calibri'], ['Arial', 'Arial'], ['Times New Roman', 'Times'], ['Georgia', 'Georgia']];
 const wopt = {
   style: WSTYLES.some(s => s[0] === ls.get('ws')) ? ls.get('ws') : 'orig',
   font: WFONTS.some(f => f[0] === ls.get('wf')) ? ls.get('wf') : 'Calibri',
-  size: ls.get('wz') === 'big' ? 'big' : 'normal'
+  size: ls.get('wz') === 'big' ? 'big' : 'normal',
+  bfile: ls.get('wb') === 'brf' ? 'brf' : 'docx'   // braille: Word con los puntos a la vista o .brf para impresora braille
 };
 const camLive = !IN_FRAME && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && window.isSecureContext;
 let camLiveFailed = false;
@@ -2017,7 +2019,7 @@ const GUIDE = [
     'Original: la foto tal cual, solo recortada.']],
   ['Formato y calidad', ['PDF: el documento tal cual, con imagen. Calidad Alta (imprimir), Normal (día a día) o Ligera (WhatsApp y correo). Se muestra el tamaño exacto.',
     'Word editable: el texto de cada hoja (títulos, párrafos, listas y tablas) en un archivo .docx que puedes cambiar en Word, Google Docs o Pages. La primera vez pide permiso.',
-    'Al tocar Word eliges cómo lo quieres: Como el original (mismos saltos de línea y centrados, una página por hoja), Informe limpio (puntuación corregida, párrafos y apartados con subtítulos, justificado y con páginas numeradas) o Solo texto (para copiar y pegar). También el tipo y el tamaño de letra. Se recuerda para la próxima vez; Cambiar lo vuelve a abrir.',
+    'Al tocar Word eliges cómo lo quieres: Como el original (mismos saltos de línea y centrados, una página por hoja), Informe limpio (puntuación corregida, párrafos y apartados con subtítulos, justificado y con páginas numeradas) Solo texto (para copiar y pegar) o Braille para personas ciegas (braille español en Word para verlo, o .brf para una impresora braille). También el tipo y el tamaño de letra. Se recuerda para la próxima vez; Cambiar lo vuelve a abrir.',
     'Cada escaneo nuevo empieza en PDF.']],
   ['Enviar y guardar', ['Enviar abre el menú de compartir del móvil: WhatsApp, correo, Drive…',
     'Guardar deja el archivo en el móvil.',
@@ -2089,7 +2091,7 @@ async function renderHome() {
     if (it.thumb) { const u = URL.createObjectURL(it.thumb); img.src = u; img.onload = img.onerror = () => URL.revokeObjectURL(u); }
     const t = document.createElement('div'); t.className = 't';
     const b = document.createElement('b'); b.textContent = it.name;
-    const s = document.createElement('span'); s.textContent = `${(it.ext || 'pdf') === 'docx' ? 'Word' : 'PDF'} · ${it.pages} ${it.pages === 1 ? 'pág.' : 'págs.'} · ${fmtBytes(it.size)} · ${fmtDate(it.date)}`;
+    const s = document.createElement('span'); s.textContent = `${({ docx: 'Word', brf: 'Braille' })[it.ext] || 'PDF'} · ${it.pages} ${it.pages === 1 ? 'pág.' : 'págs.'} · ${fmtBytes(it.size)} · ${fmtDate(it.date)}`;
     t.append(b, s);
     const act = document.createElement('div'); act.className = 'act';
     act.append(
@@ -2253,6 +2255,7 @@ async function prebuild() {
   for (const k of [...encCache.keys()]) if (!live.has(k)) encCache.delete(k);
   for (const q of [quality, ...QORDER.filter(x => x !== quality)]) {
     // la calidad elegida, completa (envío inmediato); las otras, con dos páginas de muestra para estimar
+    if (run !== preRun || !doc || sig() !== s0) return;   // se salió del documento mientras tanto
     for (const p of q === quality ? doc.pages : doc.pages.slice(0, 2)) {
       if (run !== preRun || !doc || sig() !== s0) return;
       if (!p.out) continue;
@@ -2290,7 +2293,7 @@ function renderFormat() {
     hint.textContent = '';
     const st = WSTYLES.find(s => s[0] === wopt.style), fn = WFONTS.find(f => f[0] === wopt.font);
     const row = document.createElement('span'); row.className = 'wsum';
-    const tx = document.createElement('b'); tx.textContent = `${st[1]} · ${fn[1]} · ${wopt.size === 'big' ? 'letra grande' : 'letra normal'}`;
+    const tx = document.createElement('b'); tx.textContent = wopt.style === 'braille' ? `${st[1]} · ${wopt.bfile === 'brf' ? 'archivo .brf para impresora braille' : 'en Word'}` : `${st[1]} · ${fn[1]} · ${wopt.size === 'big' ? 'letra grande' : 'letra normal'}`;
     const ch = document.createElement('button'); ch.className = 'link'; ch.id = 'wChange'; ch.textContent = 'Cambiar';
     ch.addEventListener('click', wordSheet);
     row.append(tx, ' ', ch);
@@ -2301,7 +2304,7 @@ function renderFormat() {
   const lbl = format === 'docx' ? 'Word' : 'PDF';
   $('#bSend').setAttribute('aria-label', 'Enviar ' + lbl); $('#bSave').setAttribute('aria-label', 'Guardar ' + lbl);
   // el botón dice qué se va a enviar; en Word, "Guardar" se queda en icono para que quepa
-  $('#bSend').lastChild.textContent = format === 'docx' ? 'Enviar Word' : 'Enviar';
+  $('#bSend').lastChild.textContent = format === 'docx' ? (wopt.style === 'braille' ? 'Enviar braille' : 'Enviar Word') : 'Enviar';
   $('#bSave').classList.toggle('icon', format === 'docx');
 }
 function renderQuality() {
@@ -2522,6 +2525,91 @@ async function reportClaude(pagesBlocks, signal) {
   }
   return out;
 }
+/* --- Braille español (signografía básica de la Comisión Braille Española, grado 1) --- */
+const BR = d => String.fromCharCode(0x2800 + [...String(d)].reduce((m, k) => m | (1 << (k - 1)), 0));
+const BR_LET = { a: 1, b: 12, c: 14, d: 145, e: 15, f: 124, g: 1245, h: 125, i: 24, j: 245, k: 13, l: 123, m: 134, n: 1345, o: 135, p: 1234, q: 12345, r: 1235, s: 234, t: 2345, u: 136, v: 1236, w: 2456, x: 1346, y: 13456, z: 1356,
+  á: 12356, é: 2346, í: 34, ó: 346, ú: 23456, ü: 1256, ñ: 12456, ç: 12346 };
+const BR_DIG = { 1: 1, 2: 12, 3: 14, 4: 145, 5: 15, 6: 124, 7: 1245, 8: 125, 9: 24, 0: 245 };
+const BR_SYM = { '.': '3', ',': '2', ';': '23', ':': '25', '¿': '26', '?': '26', '¡': '235', '!': '235', '"': '236', '“': '236', '”': '236', '«': '236', '»': '236', "'": '3', '‘': '3', '’': '3',
+  '(': '126', ')': '345', '[': '12356', ']': '23456', '-': '36', '‐': '36', '–': '36', '—': '36 36', '/': '6 2', '*': '35', '+': '235', '=': '2356', '%': '456 356', '€': '456 15', '@': '5', '…': '3 3 3', '•': '36' };
+const BR_CAP = BR(46), BR_NUM = BR(3456), BR_SP = '⠀';
+const brSym = c => BR_SYM[c].split(' ').map(BR).join('');
+// otras letras con tilde (à, è, ô…) se escriben como su letra base; º/ª como o/a; & como "y"
+const brBase = c => ({ 'º': 'o', 'ª': 'a', '&': 'y' })[c] || c.normalize('NFD').replace(/[̀-ͯ]/g, '');
+/** Texto → braille Unicode (⠁⠃⠉…) */
+function toBraille(text) {
+  let out = '', num = false;
+  const s = String(text).replace(/\s+/g, ' ').trim();
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (/\d/.test(c)) { if (!num) out += BR_NUM; num = true; out += BR(BR_DIG[c]); continue; }
+    if (num && (c === ',' || c === '.') && /\d/.test(s[i + 1] || '')) { out += BR(c === ',' ? 2 : 3); continue; } // coma decimal y punto de millares
+    if (c === ' ') { num = false; out += BR_SP; continue; }
+    const lo = c.toLowerCase();
+    if (BR_LET[lo] || BR_LET[brBase(lo)]) {
+      const L = BR_LET[lo] ? lo : brBase(lo);
+      if (num && /[a-j]/.test(L) && lo === c) out += BR(5);   // letra de la a a la j justo después de un número
+      num = false;
+      if (c !== lo) {
+        // palabra entera en mayúsculas → doble signo al principio
+        const w = s.slice(i).match(/^[\p{Lu}\p{Ll}]+/u)[0], prev = s[i - 1] || ' ';
+        if (w.length > 1 && w === w.toUpperCase() && !/\p{L}/u.test(prev)) { out += BR_CAP + BR_CAP; for (const ch of w) out += BR(BR_LET[ch.toLowerCase()] || BR_LET[brBase(ch.toLowerCase())] || 1); i += w.length - 1; continue; }
+        out += BR_CAP;
+      }
+      out += BR(BR_LET[L]); continue;
+    }
+    num = false;
+    if (BR_SYM[c]) { out += brSym(c); continue; }
+    if (BR_LET[brBase(c)]) { out += BR(BR_LET[brBase(c)]); continue; }
+    if (c === '$') { out += toBraille('dólar'); continue; }
+    if (c === '#') { out += toBraille('nº'); continue; }
+    // cualquier otro signo raro se omite
+  }
+  return out;
+}
+const BR_W = 40, BR_H = 25; // celdas por línea y líneas por página (papel braille estándar)
+/** Bloques → páginas de líneas braille (40×25), con número de página braille arriba a la derecha */
+function braillePages(blocks, title) {
+  const lines = [];
+  const wrap = (txt, indent = 0) => {
+    const words = toBraille(txt).split(BR_SP).filter(Boolean);
+    let cur = BR_SP.repeat(indent);
+    for (let w of words) {
+      while (w.length > BR_W) { if (cur.trim()) { lines.push(cur); cur = ''; } lines.push(w.slice(0, BR_W - 1) + BR(36)); w = w.slice(BR_W - 1); }
+      if (!cur.replace(/⠀/g, '')) cur += w;
+      else if (cur.length + 1 + w.length <= BR_W) cur += BR_SP + w;
+      else { lines.push(cur); cur = w; }
+    }
+    if (cur.replace(/⠀/g, '')) lines.push(cur);
+  };
+  const center = txt => { const b = toBraille(txt); if (b.length > BR_W - 4) { wrap(txt); return; } const pad = Math.floor((BR_W - b.length) / 2); lines.push(BR_SP.repeat(pad) + b); };
+  if (title) { center(title); lines.push(''); }
+  for (const b of blocks) {
+    if (b.t === 'h1' || b.t === 'h2') { if (lines.length && lines[lines.length - 1] !== '') lines.push(''); center(b.text); continue; }
+    if (b.t === 'table') { for (const r of b.rows) wrap(r.join('; ')); continue; }
+    if (b.t === 'li') { wrap('- ' + b.text); continue; }
+    wrap(b.text, 2); // párrafo: empieza en la celda 3
+  }
+  while (lines.length && lines[lines.length - 1] === '') lines.pop();
+  const pages = [], per = BR_H - 1;
+  for (let i = 0; i < Math.max(1, lines.length); i += per) {
+    const n = toBraille(String(pages.length + 1));
+    pages.push([BR_SP.repeat(BR_W - n.length) + n, ...lines.slice(i, i + per)]);
+  }
+  return pages;
+}
+// Braille Unicode → ASCII braille (.brf) para impresoras braille y líneas braille
+const BRF_MAP = ' A1B\'K2L@CIF/MSP"E3H9O6R^DJG>NTQ,*5<-U8V.%[$+X!&;:4\\0Z7(_?W]#Y)=';
+const toBRF = pages => pages.map(p => p.map(l => [...l].map(ch => BRF_MAP[ch.charCodeAt(0) - 0x2800] || ' ').join('').replace(/\s+$/, '')).join('\r\n')).join('\r\n\f');
+function makeBrailleDOCX(pages, title) {
+  const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+  const F = '<w:rFonts w:ascii="Segoe UI Symbol" w:hAnsi="Segoe UI Symbol" w:cs="Segoe UI Symbol" w:eastAsia="Segoe UI Symbol"/>';
+  const body = pages.map((p, i) => (i ? '<w:p><w:r><w:br w:type="page"/></w:r></w:p>' : '') + p.map(l => `<w:p><w:r><w:t xml:space="preserve">${xesc(l || BR_SP)}</w:t></w:r></w:p>`).join('')).join('');
+  const docx = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${W}><w:body>${body}<w:sectPr><w:footerReference w:type="default" r:id="rIdF"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="567" w:footer="454" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+  const footer = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${W}><w:p><w:pPr><w:jc w:val="right"/><w:spacing w:after="0"/></w:pPr><w:r><w:rPr><w:i/><w:color w:val="D9D9D9"/><w:sz w:val="12"/></w:rPr><w:t>${WATERMARK}</w:t></w:r></w:p></w:ftr>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${W}><w:docDefaults><w:rPrDefault><w:rPr>${F}<w:sz w:val="30"/><w:szCs w:val="30"/><w:lang w:val="es-ES"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="530" w:lineRule="exact"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style></w:styles>`;
+  return docxZip(docx, styles, footer, title);
+}
 /* --- .docx mínimo, sin librerías (zip sin comprimir) --- */
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 function crc32(b) { let c = 0xffffffff; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
@@ -2604,6 +2692,9 @@ function makeDOCX(pagesBlocks, title, opts = {}) {
     + `<w:style w:type="paragraph" w:styleId="Lista"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="60"/><w:tabs><w:tab w:val="left" w:pos="360"/></w:tabs><w:ind w:left="360" w:hanging="300"/></w:pPr></w:style>`
     + `<w:style w:type="paragraph" w:styleId="Nota"><w:name w:val="Nota"/><w:basedOn w:val="Normal"/><w:pPr><w:jc w:val="left"/><w:spacing w:after="${rep ? 360 : 120}"/></w:pPr><w:rPr><w:i/><w:color w:val="808080"/></w:rPr></w:style>`
     + `<w:style w:type="table" w:styleId="Tabla"><w:name w:val="Table Grid"/><w:tblPr><w:tblCellMar><w:top w:w="40" w:type="dxa"/><w:left w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
+  return docxZip(docx, styles, footer, title);
+}
+function docxZip(docx, styles, footer, title) {
   const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
   return zip([
     ['[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`],
@@ -2625,6 +2716,12 @@ async function buildDOCX() {
   let shaped = blocks;
   if (wopt.style === 'informe') shaped = [ocrEngine() === 'claude' ? await reportClaude(blocks, ctl.signal) : tidyReport(blocks)];
   else if (wopt.style === 'texto') shaped = [plainText(blocks)];
+  else if (wopt.style === 'braille') {
+    const bp = braillePages(tidyReport(blocks), doc.name.trim() || defaultName());
+    const sk = doc.pages.length - pages.length;
+    if (wopt.bfile === 'brf') return { file: new Blob([toBRF(bp)], { type: 'text/plain' }), ext: 'brf', skipped: sk };
+    return { file: makeBrailleDOCX(bp, doc.name.trim() || defaultName()), skipped: sk };
+  }
   return { file: makeDOCX(shaped, doc.name.trim() || defaultName(), opts), skipped: doc.pages.length - pages.length };
 }
 
@@ -2691,18 +2788,18 @@ async function exportDoc(action, force, fmtOverride) {
     return;
   }
   busy(false);
-  const fn = safeFile(doc.name) + '.' + fmt;
+  const ext = res.ext || fmt, fn = safeFile(doc.name) + '.' + ext;
   const r = await deliver(res.file, fn, action, res.skipped);
   exporting = false;
   if (r === 'shared' || r === 'saved') {
     doc.exportedSig = sig(); doc.sentHow = r; saveDraft(); renderDocInfo();
-    addRecent(res.file, fmt);
+    addRecent(res.file, ext);
   }
 }
 /** Envía (menú compartir) o guarda un archivo. Devuelve 'shared' | 'saved' | 'cancel' | 'fail' | 'later'. */
 async function deliver(blob, filename, action, skipped = 0) {
   const file = new File([blob], filename, { type: typeOf(filename) });
-  const kind = /\.docx$/i.test(filename) ? 'Word' : 'PDF';
+  const kind = /\.docx$/i.test(filename) ? 'Word' : /\.brf$/i.test(filename) ? 'Braille' : 'PDF';
   const extra = skipped ? ` (${plural(skipped, 'página con error no incluida', 'páginas con error no incluidas')})` : '';
   const done = (msg) => {
     toast(msg + extra);
@@ -2730,7 +2827,7 @@ async function deliver(blob, filename, action, skipped = 0) {
       if (code === 'declined') return 'cancel';
       if (code === 'rate_limited') { toast('Espera un momento y vuelve a tocar.'); return 'fail'; }
       if (code === 'too_large') { toast('El archivo es demasiado grande. Elige calidad “Ligera”.'); return 'fail'; }
-      if (code === 'rejected_extension' || code === 'extension_not_enabled') { toast('Aquí no se pueden guardar archivos ' + kind + '. Prueba en PDF.'); return 'fail'; }
+      if (code === 'rejected_extension' || code === 'extension_not_enabled') { toast('Aquí no se pueden guardar archivos ' + kind + (kind === 'Braille' ? '. Prueba con Braille en Word o desde la web de la app.' : '. Prueba en PDF.')); return 'fail'; }
     }
   }
   if (!IN_FRAME) {
@@ -2929,19 +3026,28 @@ function wordSheet() {
     }
     return box;
   };
-  sh.append(lab('Tipo de letra'));
-  const fonts = chipRow(WFONTS.map(([k, l]) => [k, l, `"${k}", serif`]), 'font'); sh.append(fonts);
-  sh.append(lab('Tamaño de letra'));
-  const sizes = chipRow([['normal', 'Normal (11)'], ['big', 'Grande (13)']], 'size'); sh.append(sizes);
+  const typo = document.createElement('div'), brl = document.createElement('div');
+  typo.append(lab('Tipo de letra'));
+  const fonts = chipRow(WFONTS.map(([k, l]) => [k, l, `"${k}", serif`]), 'font'); typo.append(fonts);
+  typo.append(lab('Tamaño de letra'));
+  const sizes = chipRow([['normal', 'Normal (11)'], ['big', 'Grande (13)']], 'size'); typo.append(sizes);
+  brl.append(lab('Archivo braille'));
+  const bfiles = chipRow([['docx', 'Word (puntos a la vista)'], ['brf', 'BRF (impresora braille)']], 'bfile'); brl.append(bfiles);
+  const bnote = document.createElement('small'); bnote.className = 'hint'; bnote.style.display = 'block'; bnote.style.marginTop = '6px';
+  bnote.textContent = 'El Word sirve para ver y revisar el braille; para leerlo con los dedos hay que imprimir el .brf en una impresora braille (o pedirlo a la ONCE).';
+  brl.append(bnote);
+  sh.append(typo, brl);
   function paint() {
     for (const b of list.children) b.setAttribute('aria-checked', String(b.dataset.k === pick.style));
     for (const c of fonts.children) c.setAttribute('aria-pressed', String(c.dataset.k === pick.font));
     for (const c of sizes.children) c.setAttribute('aria-pressed', String(c.dataset.k === pick.size));
+    for (const c of bfiles.children) c.setAttribute('aria-pressed', String(c.dataset.k === pick.bfile));
+    typo.hidden = pick.style === 'braille'; brl.hidden = pick.style !== 'braille';
   }
   paint();
   const ok = document.createElement('button'); ok.className = 'btn pri'; ok.id = 'wOk'; ok.textContent = 'Usar este formato';
   ok.addEventListener('click', () => {
-    Object.assign(wopt, pick); ls.set('ws', wopt.style); ls.set('wf', wopt.font); ls.set('wz', wopt.size);
+    Object.assign(wopt, pick); ls.set('ws', wopt.style); ls.set('wf', wopt.font); ls.set('wz', wopt.size); ls.set('wb', wopt.bfile);
     format = 'docx'; closeSheet(); renderFormat();
   });
   const c = document.createElement('button'); c.className = 'btn sec'; c.textContent = 'Cancelar'; c.addEventListener('click', () => closeSheet(true));
@@ -3002,7 +3108,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(t
 })();
 
 // Para las pruebas automáticas
-window.__njs = { tidyReport, tidyText, plainText, reportOK, wopt, outsideOdd, setDebug: () => { window.__njsDebug = {}; }, jpegInfo, bigDecode, makeDOCX, blocksFromPlain, ocrAll: (...a) => ocrAll(...a), get format() { return format; }, textOrientation, background, detectQuad, sideSupport, edgeMap, regionQuad, lineQuad, refineQuad, scoreQuad, aspectRatio, warp, enhance, makePDF, watermark, homography,
+window.__njs = { toBraille, braillePages, toBRF, makeBrailleDOCX, tidyReport, tidyText, plainText, reportOK, wopt, outsideOdd, setDebug: () => { window.__njsDebug = {}; }, jpegInfo, bigDecode, makeDOCX, blocksFromPlain, ocrAll: (...a) => ocrAll(...a), get format() { return format; }, textOrientation, background, detectQuad, sideSupport, edgeMap, regionQuad, lineQuad, refineQuad, scoreQuad, aspectRatio, warp, enhance, makePDF, watermark, homography,
   get doc() { return doc; }, get chain() { return chain; }, onFiles, setPending: t => { pending = t; }, setQuality: k => { quality = k; },
   buildPDF: () => buildPDF().then(r => r.pdf).finally(() => busy(false)), encCache };
 })();
